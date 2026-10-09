@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Overlay</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: rgba(0,0,0,0);
+      pointer-events: none;
+    }
+    #jumpscare-image, #jumpscare-video {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      display: none;
+    }
+    #username-label {
+      position: fixed;
+      bottom: 40px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 21px;
+      font-weight: 700;
+      color: #fff;
+      text-shadow:
+        0 0 8px #000,
+        0 0 16px #000,
+        2px 2px 4px rgba(0,0,0,0.9);
+      display: none;
+      pointer-events: none;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <img id="jumpscare-image" src="" alt="jumpscare" />
+  <video id="jumpscare-video" muted loop playsinline></video>
+  <div id="username-label"></div>
+  <script src="overlay.js"></script>
+</body>
+</html>

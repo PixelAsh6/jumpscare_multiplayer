@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Setup Guide</title>
+<link rel="icon" href="data:,">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',sans-serif;background:#0d0d0d;color:#e0e0e0;padding:32px 40px;line-height:1.6;overflow-y:auto}
+h1{font-size:22px;color:#fff;margin-bottom:8px}
+h2{font-size:17px;color:#7c5cff;margin:24px 0 10px}
+p,li{font-size:13px;color:#bbb;margin-bottom:10px}
+ol,ul{padding-left:20px;margin-bottom:10px}
+a{color:#7c5cff;text-decoration:none}
+a:hover{text-decoration:underline}
+.sn{display:inline-block;background:#7c5cff;color:#fff;font-size:12px;font-weight:700;width:24px;height:24px;border-radius:50%;text-align:center;line-height:24px;margin-right:8px}
+.st{font-size:15px;color:#fff;font-weight:600;margin-bottom:6px}
+pre{background:#0f0f1a;border:1px solid #2a2a4a;border-radius:6px;padding:12px 14px;font-size:11px;color:#aaa;font-family:Consolas,monospace;overflow-x:auto;white-space:pre-wrap;word-break:break-all;margin:0}
+.note{background:#1a1a3a;border:1px solid #2a2a5a;border-radius:6px;padding:10px 14px;font-size:12px;color:#999;margin:10px 0}
+.note strong{color:#e67e22}
+table{width:100%;border-collapse:collapse;margin:8px 0}
+th,td{text-align:left;padding:6px 10px;font-size:12px;border-bottom:1px solid #2a2a4a}
+th{color:#999;font-weight:600}
+td{color:#bbb}
+.sub{color:#666;font-size:13px;margin-bottom:20px}
+.s{margin-bottom:20px}
+code{background:#0f0f1a;border:1px solid #2a2a4a;border-radius:3px;padding:2px 5px;font-size:11px;font-family:Consolas,monospace;color:#ccc}
+.sql-box{position:relative;margin:8px 0}
+.copy-btn{position:absolute;top:8px;right:8px;background:#7c5cff;color:#fff;border:none;border-radius:4px;padding:4px 10px;font-size:11px;cursor:pointer;z-index:1}
+.copy-btn:hover{opacity:0.85}
+</style>
+</head>
+<body>
+<h1>Jumpscare Multiplayer - Setup Guide</h1>
+<p class="sub">This app uses <a href="https://supabase.com" data-ext>Supabase</a> (free) to connect all players. If you only want to join lobbies, you don't need this.</p>
+
+<div class="s"><div class="st"><span class="sn">1</span>Create a Supabase project</div>
+<ol><li>Go to <a href="https://supabase.com" data-ext>supabase.com</a> and sign up</li>
+<li>Click <b>New project</b></li></ol>
+<table><tr><th>Field</th><th>Value</th></tr>
+<tr><td>Name</td><td>jumpscare-multiplayer (or anything)</td></tr>
+<tr><td>Database password</td><td>Choose one and save it</td></tr>
+<tr><td>Region</td><td>Pick the closest to you</td></tr></table>
+<p>Wait ~2 minutes for it to be ready.</p></div>
+
+<div class="s"><div class="st"><span class="sn">2</span>Run the SQL schema</div>
+<ol><li>In your project dashboard, go to <b>SQL Editor</b> (left sidebar)</li>
+<li>Click <b>New query</b></li>
+<li>Paste the entire SQL script below and click <b>Run</b></li></ol>
+<div class="sql-box">
+<button class="copy-btn" id="sql-copy">Copy</button>
+<pre id="sql-script">CREATE TABLE lobbies (
+  room_code TEXT PRIMARY KEY,
+  host_id TEXT,
+  admin_name TEXT DEFAULT '',
+  chance REAL DEFAULT 1.0,
+  video_url TEXT DEFAULT '',
+  random_mode BOOLEAN DEFAULT false,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE players (
+  id TEXT PRIMARY KEY,
+  room_code TEXT REFERENCES lobbies(room_code) ON DELETE CASCADE,
+  username TEXT,
+  is_admin BOOLEAN DEFAULT false,
+  online BOOLEAN DEFAULT false,
+  last_seen TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE jumpscares (
+  id BIGSERIAL PRIMARY KEY,
+  room_code TEXT REFERENCES lobbies(room_code) ON DELETE CASCADE,
+  player_id TEXT,
+  username TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+ALTER TABLE lobbies ENABLE ROW LEVEL SECURITY;
+ALTER TABLE players ENABLE ROW LEVEL SECURITY;
+ALTER TABLE jumpscares ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "rl" ON lobbies FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "rl" ON players FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "rl" ON jumpscares FOR ALL USING (true) WITH CHECK (true);
+
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('jumpscare-assets','jumpscare-assets',true)
+ON CONFLICT DO NOTHING;
+CREATE POLICY "up" ON storage.objects FOR INSERT
+  WITH CHECK (bucket_id='jumpscare-assets');
+CREATE POLICY "rd" ON storage.objects FOR SELECT
+  USING (bucket_id='jumpscare-assets');
+CREATE POLICY "upd" ON storage.objects FOR UPDATE
+  USING (bucket_id='jumpscare-assets')
+  WITH CHECK (bucket_id='jumpscare-assets');
+CREATE POLICY "del" ON storage.objects FOR DELETE
+  USING (bucket_id='jumpscare-assets');
+
+ALTER PUBLICATION supabase_realtime ADD TABLE lobbies;
+ALTER PUBLICATION supabase_realtime ADD TABLE players;
+ALTER PUBLICATION supabase_realtime ADD TABLE jumpscares;</pre>
+</div></div>
+
+<div class="s"><div class="st"><span class="sn">3</span>Get your API keys</div>
+<ol><li>In your project dashboard, go to <b>Project Settings</b> (gear icon at the bottom of the sidebar)</li>
+<li>Click <b>API</b> in the left menu</li>
+<li>Under <b>Project URL</b>, copy the URL (looks like <code>https://xxx.supabase.co</code>)</li>
+<li>Under <b>Legacy API keys</b>, copy the <b>anon</b> <code>public</code> key (starts with <code>eyJ...</code>)</li></ol>
+<p>Paste both values into the app Settings. Also set a <b>Share Password</b> in Settings — without it the app won't show a share string, and guests need the password to join.</p></div>
+
+<div class="s"><div class="st"><span class="sn">4</span>Share your lobby</div>
+<ol><li>Create a lobby in the app with <b>+ New</b></li>
+<li>Copy the share string (starts with <code>JUMPCARE2</code> — it's encrypted)</li>
+<li>Send friends the string <b>and</b> your share password (separately)</li></ol></div>
+
+<h2>How it works</h2>
+<ul><li><b>Host</b> creates a lobby - their username becomes admin</li>
+<li><b>Guest</b> joins via share string - same username = same admin on any device</li></ul>
+
+<h2>Troubleshooting</h2>
+<table><tr><th>Problem</th><th>Fix</th></tr>
+<tr><td>"Invalid API key"</td><td>Double-check the anon key in Settings. Make sure you copied the <code>anon</code> key, not <code>service_role</code>.</td></tr>
+<tr><td>No share string shown</td><td>Set a <b>Share Password</b> in Settings first.</td></tr>
+<tr><td>"Wrong password" when joining</td><td>Ask the host for the current share password — it must match exactly.</td></tr>
+<tr><td>Players can't see each other</td><td>Make sure you ran the full SQL from Step 2 successfully.</td></tr>
+<tr><td>Admin not working on other device</td><td>Make sure you're using the same username.</td></tr></table>
+
+<script>
+// External links open in the system browser, never inside this window
+document.querySelectorAll('a[data-ext]').forEach(function(a) {
+  a.addEventListener('click', function(e) {
+    e.preventDefault();
+    var url = a.getAttribute('href');
+    try {
+      if (window.__TAURI__ && window.__TAURI__.core) {
+        window.__TAURI__.core.invoke('plugin:opener|open_url', { url: url }).catch(function() { window.open(url, '_blank'); });
+      } else {
+        window.open(url, '_blank');
+      }
+    } catch (_) { window.open(url, '_blank'); }
+  });
+});
+document.getElementById('sql-copy').addEventListener('click', function() {
+  var btn = this;
+  var text = document.getElementById('sql-script').textContent;
+  function done() {
+    btn.textContent = 'Copied!';
+    setTimeout(function() { btn.textContent = 'Copy'; }, 1500);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(function() { fallback(); });
+  } else { fallback(); }
+  function fallback() {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch (_) {}
+    document.body.removeChild(ta);
+  }
+});
+</script>
+</body>
+</html>

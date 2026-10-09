@@ -1,0 +1,17 @@
+{
+  "name": "jumpscare-multiplayer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  },
+  "dependencies": {
+    "@dietrichgebert/ponytail": "^4.10.0",
+    "@supabase/supabase-js": "^2.117.0",
+    "playwright": "^1.63.0"
+  }
+}

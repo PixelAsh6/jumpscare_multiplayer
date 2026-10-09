@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jumpscare Multiplayer</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+  <!-- ═══════════════ VIEW: SETUP (first time only) ═══════════════ -->
+  <!-- ponytail: no default active view — JS picks setup vs menu at boot so the wrong screen never flashes -->
+  <div id="view-setup" class="view">
+    <div class="card">
+      <h1>Jumpscare Multiplayer</h1>
+      <p class="subtitle">Enter your username to get started.</p>
+
+      <label for="setup-username">Your Username</label>
+      <input id="setup-username" type="text" maxlength="20" />
+
+      <button id="btn-setup-save" class="primary">Continue</button>
+      <div id="setup-status" class="status hidden"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ VIEW: JOIN BY STRING ═══════════════ -->
+  <div id="view-join-string" class="view">
+    <div class="card">
+      <h1>Join Lobby</h1>
+      <p class="subtitle">Paste the share string from your friend.</p>
+
+      <label for="join-string-input">Share String</label>
+      <input id="join-string-input" type="text" placeholder="JUMPCARE:roomname:https://xxx.supabase.co:ey..." />
+
+      <button id="btn-join-by-string" class="primary">Join</button>
+      <div id="join-status" class="status hidden"></div>
+
+      <button id="link-back-to-setup" class="secondary small" style="width:100%">Back</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════ VIEW: MAIN MENU ═══════════════ -->
+  <div id="view-menu" class="view">
+    <div class="layout">
+      <!-- Left: lobbies + people -->
+      <div class="panel-left">
+        <div class="panel-header">
+          <h2>Lobbies</h2>
+          <div class="btn-row">
+            <button id="btn-goto-join" class="small secondary">Join</button>
+            <button id="btn-new-lobby" class="small primary">+ New</button>
+          </div>
+        </div>
+        <div id="lobby-list" class="lobby-list"></div>
+
+        <div class="panel-divider"></div>
+
+        <div class="panel-header">
+          <h2>People</h2>
+        </div>
+        <div id="player-list-sidebar" class="player-list"></div>
+
+        <div class="panel-footer">
+          <button id="btn-settings" class="secondary small">Settings</button>
+        </div>
+      </div>
+
+      <!-- Right: lobby details + admin panel + settings panel -->
+      <div class="panel-right">
+
+        <!-- Settings panel (toggleable) -->
+        <div id="settings-panel" class="settings-panel hidden">
+          <h2>Settings</h2>
+
+          <label for="settings-username">Username</label>
+          <input id="settings-username" type="text" maxlength="20" />
+
+          <label for="settings-supabase-url">Your Supabase URL <span class="hint-inline">(used when creating lobbies)</span></label>
+          <input id="settings-supabase-url" type="text" placeholder="https://xxxxx.supabase.co" />
+
+          <label for="settings-supabase-key">Your Supabase Anon Key</label>
+          <input id="settings-supabase-key" type="text" placeholder="eyJhbGci..." />
+
+          <label for="settings-share-password">Share Password <span class="hint-inline">(required — guests enter it to join)</span></label>
+          <div class="row">
+            <input id="settings-share-password" type="password" placeholder="Pick a password for your share strings" maxlength="64" />
+            <button id="btn-share-pw-toggle" class="secondary small" type="button">Show</button>
+          </div>
+
+          <label for="settings-volume">Jumpscare Volume</label>
+          <div class="volume-row">
+            <input id="settings-volume" type="range" min="0" max="100" value="80" />
+            <input id="settings-volume-text" type="number" min="0" max="100" value="80" />%
+          </div>
+
+          <p class="hint">Don't have a Supabase? <a href="#" id="link-supabase-guide">Follow the setup guide</a></p>
+
+          <label>FFmpeg (for Video Editor)</label>
+          <div class="row">
+            <span id="ffmpeg-status-text" class="hint" style="margin:0">Checking...</span>
+            <button id="btn-check-ffmpeg" class="secondary small">Check</button>
+            <button id="btn-download-ffmpeg" class="secondary small" style="display:none">Install FFmpeg</button>
+          </div>
+
+          <label>yt-dlp (for URL downloads)</label>
+          <div class="row">
+            <span id="ytdlp-status-text" class="hint" style="margin:0">Checking...</span>
+            <button id="btn-check-ytdlp" class="secondary small">Check</button>
+            <button id="btn-download-ytdlp" class="secondary small" style="display:none">Install yt-dlp</button>
+          </div>
+
+          <label class="check-row"><input id="settings-autostart" type="checkbox" /> Start with Windows</label>
+
+          <div class="modal-buttons">
+            <button id="btn-settings-save" class="primary small">Save Settings</button>
+            <button id="btn-settings-close" class="secondary small">Close</button>
+          </div>
+          <div id="settings-status" class="status hidden"></div>
+        </div>
+
+        <!-- Lobby details (shown when lobby selected) -->
+        <div id="lobby-details" class="lobby-details hidden">
+          <div class="room-header">
+            <h2 id="detail-name">—</h2>
+            <span id="detail-role" class="badge">Guest</span>
+          </div>
+
+          <!-- Permanent share string -->
+          <div class="share-section">
+            <label>Share this string so others can join:</label>
+            <div class="share-box">
+              <code id="share-string"></code>
+              <button id="btn-copy-share" class="tiny">Copy</button>
+            </div>
+          </div>
+
+          <div class="info-row">
+            <span>Total chance:</span>
+            <span id="detail-chance">—</span>
+          </div>
+          <div class="info-row">
+            <span>Your chance:</span>
+            <span id="detail-my-chance">—</span>
+          </div>
+          <div class="info-row">
+            <span>Players online:</span>
+            <span id="detail-online-count">0</span>
+          </div>
+
+          <!-- Admin panel -->
+          <div id="admin-panel" class="hidden">
+            <h3>Admin Settings</h3>
+
+            <label>Global Chance %</label>
+            <div class="row">
+              <input id="admin-chance" type="number" value="1.0" min="0.01" max="100" step="0.01" />
+            </div>
+
+            <label>Jumpscare Video</label>
+            <div class="row">
+              <input id="video-file" type="file" accept="video/*,image/gif,image/png,image/webp" multiple />
+              <button id="btn-clear-video" class="secondary tiny" title="Remove synced video">Clear</button>
+            </div>
+
+            <label>Lobby Videos <span class="hint-inline">(click a video to switch instantly)</span></label>
+            <div id="video-list" class="player-list"></div>
+            <label class="check-row"><input id="random-mode" type="checkbox" /> Random video each scare</label>
+
+            <button id="btn-sync-all" class="primary small">Sync Assets & Chance to Supabase</button>
+            <div id="asset-status" class="hint"></div>
+
+            <button id="btn-delete-assets" class="danger small">Delete All Synced Assets</button>
+
+            <div class="divider"></div>
+
+            <button id="btn-video-editor" class="secondary small">Video Editor (MP4 → Transparent WebM)</button>
+
+            <div class="divider"></div>
+
+            <button id="btn-preview-scare" class="secondary small">Preview Jumpscare</button>
+
+            <div class="divider"></div>
+
+            <button id="btn-force-jumpscare" class="danger">Force Jumpscare (All)</button>
+          </div>
+
+          <div class="divider"></div>
+          <button id="btn-leave-lobby" class="secondary">Leave Lobby</button>
+          <button id="btn-delete-lobby" class="danger small hidden">Delete Lobby</button>
+        </div>
+
+        <div id="no-lobby-selected" class="empty-state">
+          <p>Select a lobby or create a new one.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="main.js"></script>
+
+  <!-- Lobby name modal -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h2 id="modal-title">Enter Lobby Name</h2>
+      <input id="modal-input" type="text" maxlength="30" placeholder="My Lobby" />
+      <div class="modal-buttons">
+        <button id="modal-ok" class="primary small">Create</button>
+        <button id="modal-cancel" class="secondary small">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Video Editor modal -->
+  <div id="video-editor-overlay" class="modal-overlay hidden">
+    <div class="modal-card video-editor-card">
+      <h2>Video Editor</h2>
+      <p class="hint">Browse any video (MP4, MKV, AVI, WebM) to convert it to a transparent WebM jumpscare. FFmpeg must be installed (see Settings).</p>
+
+      <div id="ve-dropzone" class="ve-dropzone">
+        <p>Click to browse a video</p>
+        <p class="hint">MP4, MKV, AVI, WebM, GIF, PNG, etc.</p>
+        <input id="ve-file-input" type="file" accept="video/*,image/gif,image/png,image/webp" style="display:none" />
+      </div>
+
+      <div class="row" id="ve-url-row" style="margin:12px 0">
+        <input id="ve-url" type="text" placeholder="Paste video URL (YouTube, mp4 link…)" />
+        <button id="ve-download" class="secondary small">Download</button>
+      </div>
+      <button id="ve-reset" class="secondary small hidden">Reset (choose another video)</button>
+
+      <div id="ve-preview" class="ve-preview hidden">
+        <canvas id="ve-canvas" width="480" height="270"></canvas>
+        <video id="ve-video" style="display:none" muted loop></video>
+        <p class="hint" id="ve-click-hint">Click on the preview to pick the color to remove</p>
+      </div>
+
+      <div id="ve-controls" class="ve-controls hidden">
+        <label>Key Color</label>
+        <div class="ve-color-row">
+          <input id="ve-color" type="color" value="#00ff00" />
+          <span id="ve-color-hex" class="ve-color-hex">#00ff00</span>
+        </div>
+
+        <label>Tolerance: <span id="ve-tol-val">0.30</span></label>
+        <input id="ve-tolerance" type="range" min="0" max="100" value="30" />
+
+        <label>Trim: <span id="ve-trim-label">full video</span></label>
+        <div class="ve-trim-row">
+          <input id="ve-trim-start" type="range" min="0" max="100" step="0.1" value="0" title="Trim start (arrow keys = 1 frame, Shift+arrows = 10)" />
+          <input id="ve-trim-end" type="range" min="0" max="100" step="0.1" value="100" title="Trim end (arrow keys = 1 frame, Shift+arrows = 10)" />
+        </div>
+
+        <div class="ve-btn-row">
+          <button id="ve-export" class="primary small">Export Transparent WebM</button>
+          <button id="ve-cancel" class="secondary small">Cancel</button>
+        </div>
+        <label>Output name</label>
+        <input id="ve-output-name" type="text" maxlength="60" placeholder="Foxy" />
+        <button id="ve-use" class="primary small hidden" style="width:100%">Use This Video for Jumpscare</button>
+        <div id="ve-status" class="hint"></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

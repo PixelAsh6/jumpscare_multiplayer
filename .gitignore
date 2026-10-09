@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Rust build
+src-tauri/target/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Tauri generated
+src-tauri/gen/
+src-tauri/target/
+
+# Agent/skill files (not part of the app)
+.agents/
+.opencode/
+skills-lock.json
+opencode.json
+
+# Local test artifacts (regenerable)
+debug/
+.playwright-mcp/
+*.log
+transparent_videos/
+dependencies/
+
+# Dead code kept locally, never pushed (no references from the build)
+src-tauri/src/relay.rs
