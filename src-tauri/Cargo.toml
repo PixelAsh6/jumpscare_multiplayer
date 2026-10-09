@@ -1,6 +1,6 @@
 [package]
 name = "jumpscare-multiplayer"
-version = "1.0.0"
+version = "1.0.1"
 description = "Multiplayer jumpscare overlay — connect multiple PCs and scare each other"
 authors = ["PixelAsh"]
 edition = "2021"
