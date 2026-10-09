@@ -1,4 +1,4 @@
--- Jumpscare Multiplayer — Supabase Schema
+-- Jumpscare Multiplayer - Supabase Schema
 -- Run this in your Supabase SQL Editor (Dashboard → SQL Editor → New query)
 
 -- 1. Lobbies table

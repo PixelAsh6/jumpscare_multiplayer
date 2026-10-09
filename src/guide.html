@@ -107,11 +107,11 @@ ALTER PUBLICATION supabase_realtime ADD TABLE jumpscares;</pre>
 <li>Click <b>API</b> in the left menu</li>
 <li>Under <b>Project URL</b>, copy the URL (looks like <code>https://xxx.supabase.co</code>)</li>
 <li>Under <b>Legacy API keys</b>, copy the <b>anon</b> <code>public</code> key (starts with <code>eyJ...</code>)</li></ol>
-<p>Paste both values into the app Settings. Also set a <b>Share Password</b> in Settings — without it the app won't show a share string, and guests need the password to join.</p></div>
+<p>Paste both values into the app Settings. Also set a <b>Share Password</b> in Settings - without it the app won't show a share string, and guests need the password to join.</p></div>
 
 <div class="s"><div class="st"><span class="sn">4</span>Share your lobby</div>
 <ol><li>Create a lobby in the app with <b>+ New</b></li>
-<li>Copy the share string (starts with <code>JUMPSCARE</code> — it's encrypted)</li>
+<li>Copy the share string (starts with <code>JUMPSCARE</code> - it's encrypted)</li>
 <li>Send friends the string <b>and</b> your share password (separately)</li></ol></div>
 
 <h2>How it works</h2>
@@ -122,7 +122,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE jumpscares;</pre>
 <table><tr><th>Problem</th><th>Fix</th></tr>
 <tr><td>"Invalid API key"</td><td>Double-check the anon key in Settings. Make sure you copied the <code>anon</code> key, not <code>service_role</code>.</td></tr>
 <tr><td>No share string shown</td><td>Set a <b>Share Password</b> in Settings first.</td></tr>
-<tr><td>"Wrong password" when joining</td><td>Ask the host for the current share password — it must match exactly.</td></tr>
+<tr><td>"Wrong password" when joining</td><td>Ask the host for the current share password - it must match exactly.</td></tr>
 <tr><td>Players can't see each other</td><td>Make sure you ran the full SQL from Step 2 successfully.</td></tr>
 <tr><td>Admin not working on other device</td><td>Make sure you're using the same username.</td></tr></table>
 

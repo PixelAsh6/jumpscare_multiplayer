@@ -11,7 +11,7 @@
 <body>
 
   <!-- ═══════════════ VIEW: SETUP (first time only) ═══════════════ -->
-  <!-- ponytail: no default active view — JS picks setup vs menu at boot so the wrong screen never flashes -->
+  <!-- ponytail: no default active view - JS picks setup vs menu at boot so the wrong screen never flashes -->
   <div id="view-setup" class="view">
     <div class="card">
       <h1>Jumpscare Multiplayer</h1>
@@ -83,7 +83,7 @@
           <label for="settings-supabase-key">Your Supabase Anon Key</label>
           <input id="settings-supabase-key" type="text" placeholder="eyJhbGci..." />
 
-          <label for="settings-share-password">Share Password <span class="hint-inline">(required — guests enter it to join)</span></label>
+          <label for="settings-share-password">Share Password <span class="hint-inline">(required - guests enter it to join)</span></label>
           <div class="row">
             <input id="settings-share-password" type="password" placeholder="Pick a password for your share strings" maxlength="64" />
             <button id="btn-share-pw-toggle" class="secondary small" type="button">Show</button>
@@ -124,7 +124,7 @@
         <!-- Lobby details (shown when lobby selected) -->
         <div id="lobby-details" class="lobby-details hidden">
           <div class="room-header">
-            <h2 id="detail-name">—</h2>
+            <h2 id="detail-name">-</h2>
             <span id="detail-role" class="badge">Guest</span>
           </div>
 
@@ -139,11 +139,11 @@
 
           <div class="info-row">
             <span>Total chance:</span>
-            <span id="detail-chance">—</span>
+            <span id="detail-chance">-</span>
           </div>
           <div class="info-row">
             <span>Your chance:</span>
-            <span id="detail-my-chance">—</span>
+            <span id="detail-my-chance">-</span>
           </div>
           <div class="info-row">
             <span>Players online:</span>

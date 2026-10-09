@@ -30,7 +30,7 @@ function isVideoUrl(url) {
 }
 
 async function showJumpscare(username, videoUrl, volume) {
-  if (!videoUrl) return; // nothing to show — never queue or flash empty
+  if (!videoUrl) return; // nothing to show - never queue or flash empty
   if (hideTimeout) { pendingShow = { username: username, videoUrl: videoUrl, volume: volume }; return; }
 
   labelEl.textContent = 'Jumpscared by: ' + (username || "???");
@@ -79,7 +79,7 @@ function playVideo(url) {
       }
     }
     function settle() {
-      // ponytail: WebM often reports Infinity at first — wait for the real duration
+      // ponytail: WebM often reports Infinity at first - wait for the real duration
       var d = videoEl.duration;
       if (isFinite(d) && d > 0) finish(d);
     }
@@ -93,7 +93,7 @@ function playVideo(url) {
     videoEl.addEventListener('error', onErr);
     videoEl.src = url;
     videoEl.load();
-    kickPlayback(); // ponytail: don't gate playback on metadata — these files don't reliably fire loadedmetadata
+    kickPlayback(); // ponytail: don't gate playback on metadata - these files don't reliably fire loadedmetadata
     setTimeout(function() {
       kickPlayback();
       var d = videoEl.duration;
@@ -150,7 +150,7 @@ async function getImageDuration(url) {
           i++; // terminator
         }
       } else if (v[i] === 0x2C) {
-        // Image descriptor — skip entirely
+        // Image descriptor - skip entirely
         i++; i += 9;
         // Local Color Table?
         if (v[i] & 0x80) { i += (2 << (v[i] & 0x07)) * 3; }

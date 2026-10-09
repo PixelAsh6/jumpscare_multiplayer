@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    // ponytail: allow unmuted autoplay app-wide — the overlay window never receives a user
+    // ponytail: allow unmuted autoplay app-wide - the overlay window never receives a user
     // gesture, so without this every scare plays silent. Must run before any WebView exists.
     // Existing args (e.g. remote-debugging-port) are preserved.
     let mut args = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();

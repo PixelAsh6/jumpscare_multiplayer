@@ -32,7 +32,7 @@ pub fn set_clickthrough(window: &WebviewWindow) -> Result<(), String> {
 
         SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
 
-        // ponytail: strip caption/sysmenu/thickframe at Win32 level — decorations(false)
+        // ponytail: strip caption/sysmenu/thickframe at Win32 level - decorations(false)
         // doesn't always stick, and the leftover titlebar paints white when inactive
         let style = GetWindowLongW(hwnd, GWL_STYLE);
         let plain_style = style

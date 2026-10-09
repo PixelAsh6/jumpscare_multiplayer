@@ -1,4 +1,4 @@
-# Jumpscare Multiplayer — Supabase Setup Guide
+# Jumpscare Multiplayer - Supabase Setup Guide
 
 This app uses [Supabase](https://supabase.com) (free) to connect all players. You don't need to run a server, forward ports, or use a VPN.
 
@@ -11,7 +11,7 @@ This app uses [Supabase](https://supabase.com) (free) to connect all players. Yo
 
 ---
 
-## Step 1 — Create a Supabase project
+## Step 1 - Create a Supabase project
 
 1. Go to **https://supabase.com** → **Start your project** → Sign up with GitHub
 2. Click **New project**
@@ -20,7 +20,7 @@ This app uses [Supabase](https://supabase.com) (free) to connect all players. Yo
    - **Region**: pick the closest to you
 3. Wait ~2 minutes for it to be ready
 
-## Step 2 — Run the SQL schema
+## Step 2 - Run the SQL schema
 
 1. In your project dashboard, go to **SQL Editor** (left sidebar)
 2. Click **New query**
@@ -28,7 +28,7 @@ This app uses [Supabase](https://supabase.com) (free) to connect all players. Yo
 4. Click **Run** → you should see "Success. No rows returned"
 
 ```sql
--- ── Jumpscare Multiplayer — Supabase Schema ──────────────
+-- ── Jumpscare Multiplayer - Supabase Schema ──────────────
 
 -- 1. Lobbies table
 CREATE TABLE IF NOT EXISTS lobbies (
@@ -95,7 +95,7 @@ CREATE POLICY "del" ON storage.objects FOR DELETE
   USING (bucket_id = 'jumpscare-assets');
 ```
 
-## Step 3 — Get your API keys
+## Step 3 - Get your API keys
 
 1. Go to **Settings** (gear icon, bottom left) → **API**
 2. Copy these two values:
@@ -105,9 +105,9 @@ CREATE POLICY "del" ON storage.objects FOR DELETE
 | **Project URL** | `https://xxxxxxxx.supabase.co` |
 | **Anon key** | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...` |
 
-3. In the app, paste both values into Settings, and set a **Share Password** (required — share strings only appear once it's set, and guests must enter it to join).
+3. In the app, paste both values into Settings, and set a **Share Password** (required - share strings only appear once it's set, and guests must enter it to join).
 
-## Step 4 — Enable Realtime
+## Step 4 - Enable Realtime
 
 1. Go to **Database** → **Replication**
 2. Make sure these tables are toggled **ON**:

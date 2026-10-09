@@ -37,7 +37,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     await withTimeout(supabase.from('players').delete()
       .eq('room_code', roomCode).eq('username', myUsername).neq('id', myPlayerId), 20000, "Cleanup");
   }
-  // ponytail: supabase-js has no request timeout — a stalled request must surface, never hang the UI
+  // ponytail: supabase-js has no request timeout - a stalled request must surface, never hang the UI
   function withTimeout(promise, ms, label) {
     var timer = null;
     var timeout = new Promise(function(_, reject) {
@@ -76,7 +76,7 @@ document.addEventListener("DOMContentLoaded", async function() {
   }
   function getShareString(lobby) { return "JUMPCARE:" + lobby.name + ":" + lobby.supabase_url + ":" + lobby.supabase_key; }
 
-  // Encrypted share strings (JUMPSCARE prefix) — AES-GCM via WebCrypto, password shared out-of-band
+  // Encrypted share strings (JUMPSCARE prefix) - AES-GCM via WebCrypto, password shared out-of-band
   function b64url(bytes) { var bin = ""; bytes.forEach(function(b) { bin += String.fromCharCode(b); }); return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
   function unb64url(s) { s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; var bin = atob(s); var out = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
   async function encShare(url, key, password) {
@@ -137,7 +137,7 @@ document.addEventListener("DOMContentLoaded", async function() {
 
   var fitTimer = null;
   function fitWindowToContent() {
-    // ponytail: grow-only, debounced — never fight manual resizes, never shrink under content.
+    // ponytail: grow-only, debounced - never fight manual resizes, never shrink under content.
     // All OS sizes here are physical pixels (innerSize/outerSize); CSS px get scaled by devicePixelRatio.
     if (fitTimer) clearTimeout(fitTimer);
     fitTimer = setTimeout(async function() {
@@ -150,7 +150,7 @@ document.addEventListener("DOMContentLoaded", async function() {
         if (extra <= 4) return;
         var f = window.devicePixelRatio || 1;
         var maxOuterH = (window.screen.availHeight || 1000) - 40;
-        if (maxOuterH <= window.outerHeight) return; // screen is full — growing is impossible, never shrink
+        if (maxOuterH <= window.outerHeight) return; // screen is full - growing is impossible, never shrink
         var targetOuterH = Math.min(window.outerHeight + extra, maxOuterH);
         var cur = await win.outerSize();
         if (Math.abs(cur.height - targetOuterH * f) > 8 * f) {
@@ -339,7 +339,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     await checkFfmpeg();
   });
 
-  // YT-DLP STATUS + DOWNLOAD (mirrors FFmpeg, but silent — no terminal)
+  // YT-DLP STATUS + DOWNLOAD (mirrors FFmpeg, but silent - no terminal)
   async function checkYtdlp() {
     try {
       await invoke("ytdlp_status");
@@ -555,7 +555,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     if (!exists) {
       list.push({ name: lobby.name, supabase_url: lobby.supabase_url, supabase_key: lobby.supabase_key });
     } else {
-      // ponytail: same name, new backend — refresh stale credentials instead of keeping them forever
+      // ponytail: same name, new backend - refresh stale credentials instead of keeping them forever
       exists.supabase_url = lobby.supabase_url;
       exists.supabase_key = lobby.supabase_key;
     }
@@ -664,7 +664,7 @@ document.addEventListener("DOMContentLoaded", async function() {
       });
   }
 
-  // VIDEO LIBRARY — click a row to switch instantly, × deletes from Supabase
+  // VIDEO LIBRARY - click a row to switch instantly, × deletes from Supabase
   async function renderVideoList() {
     var el = $("video-list");
     if (!el) return;
@@ -682,7 +682,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     } catch (_) {}
     var cur = baseUrl(syncedVideoUrl);
     if (!vids.length) {
-      el.innerHTML = "<p style=\"color:#555;font-size:12px;padding:8px;\">No videos yet — choose files above and Sync.</p>";
+      el.innerHTML = "<p style=\"color:#555;font-size:12px;padding:8px;\">No videos yet - choose files above and Sync.</p>";
       return;
     }
     vids.forEach(function(v) {
@@ -858,11 +858,11 @@ document.addEventListener("DOMContentLoaded", async function() {
       if (update.chance !== undefined) syncedChance = update.chance;
       if (update.video_url !== undefined) syncedVideoUrl = update.video_url;
       var onlyChance = update.chance !== undefined && update.video_url === undefined;
-      statusEl.textContent = onlyChance ? "Chance synced." : "Synced!" + (opaqueNote ? " (note: MP4-style video has no transparency — export via Video Editor first)" : "");
+      statusEl.textContent = onlyChance ? "Chance synced." : "Synced!" + (opaqueNote ? " (note: MP4-style video has no transparency - export via Video Editor first)" : "");
       statusEl.style.color = "#2ecc71";
       clearVideo = false;
       $("btn-clear-video").textContent = "Clear";
-      $("video-file").value = ""; // chosen files are now synced — clear so they aren't re-uploaded next time
+      $("video-file").value = ""; // chosen files are now synced - clear so they aren't re-uploaded next time
       refreshLobbyData();
       renderVideoList();
     } catch (err) {
@@ -918,7 +918,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     await dbg("Force jumpscare");
     if (!currentLobby || !supabase || !isAdmin) return;
     var nowMs = Date.now();
-    if (nowMs - lastForceAt < 2000) return; // ponytail: debounce — cooldown already gates the overlay, this gates DB row spam
+    if (nowMs - lastForceAt < 2000) return; // ponytail: debounce - cooldown already gates the overlay, this gates DB row spam
     lastForceAt = nowMs;
     try {
       var ins = await withTimeout(supabase.from("jumpscares").insert({
@@ -1003,7 +1003,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     autoRollInterval = null;
   }
 
-  // PLAYER PING — update last_seen every 30s so others can detect stale players
+  // PLAYER PING - update last_seen every 30s so others can detect stale players
   function startPing() {
     stopPing();
     pingInterval = setInterval(async function() {
@@ -1021,7 +1021,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     pingInterval = null;
   }
 
-  // STALE CLEANUP — mark players offline if last_seen > 60s ago
+  // STALE CLEANUP - mark players offline if last_seen > 60s ago
   function startCleanup() {
     stopCleanup();
     cleanupInterval = setInterval(async function() {
@@ -1071,7 +1071,7 @@ document.addEventListener("DOMContentLoaded", async function() {
       if (lobby && lobby.random_mode) {
         vid = await pickRandomVideo(vid) || vid;
       }
-      if (!vid) return; // nothing synced yet — skip empty fullscreen flash
+      if (!vid) return; // nothing synced yet - skip empty fullscreen flash
       if (!skipCooldown) {
         var now = Date.now();
         if (now - lastScareAt < 10000) return; // ponytail: 10s cooldown for auto scares only
@@ -1219,7 +1219,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     if (!lastName) return;
     var list = loadLobbies();
     var lobby = list.find(function(l) { return l.name === lastName; });
-    if (lobby) joinExistingLobby(lobby, true); // ponytail: silent — a stale entry must not pop an alert on boot
+    if (lobby) joinExistingLobby(lobby, true); // ponytail: silent - a stale entry must not pop an alert on boot
   }
 
   // BEFORE UNLOAD
@@ -1339,14 +1339,14 @@ document.addEventListener("DOMContentLoaded", async function() {
       }
     });
 
-    // Click to browse — use HTML file input (native WebView2 dialog, always works)
+    // Click to browse - use HTML file input (native WebView2 dialog, always works)
     veDropzone.addEventListener("click", function() {
       var input = $("ve-file-input");
       input.value = "";
       input.click();
     });
 
-    // Hidden file input — reads file, creates blob URL for preview, stores for export
+    // Hidden file input - reads file, creates blob URL for preview, stores for export
     function onVideoLoaded() {
       veCanvas.width = veVideo.videoWidth || 480;
       veCanvas.height = veVideo.videoHeight || 270;
@@ -1369,13 +1369,13 @@ document.addEventListener("DOMContentLoaded", async function() {
       pendingExportFile = null;
       $("ve-use").classList.add("hidden");
       veStatus.textContent = "";
-      // Use blob URL for instant preview — no temp file needed
+      // Use blob URL for instant preview - no temp file needed
       var url = URL.createObjectURL(file);
-      veFilePath = null; // no disk path yet — only set after drag-drop or save_to_temp
+      veFilePath = null; // no disk path yet - only set after drag-drop or save_to_temp
       veVideo.src = url;
       veVideo.load();
       veVideo.onloadeddata = onVideoLoaded;
-      // Store file for export — write to temp when user clicks Export
+      // Store file for export - write to temp when user clicks Export
       vePendingFile = file;
       } catch (e) {
         veStatus.textContent = "Error: " + e;
@@ -1383,7 +1383,7 @@ document.addEventListener("DOMContentLoaded", async function() {
       }
     });
 
-    // URL import — yt-dlp to temp, then the normal path-preview flow
+    // URL import - yt-dlp to temp, then the normal path-preview flow
     var veDownload = $("ve-download");
     veDownload.addEventListener("click", async function() {
       var url = $("ve-url").value.trim();
@@ -1526,7 +1526,7 @@ document.addEventListener("DOMContentLoaded", async function() {
       veTrimLabel.textContent = t.dur ? (t.t0.toFixed(1) + "s – " + t.t1.toFixed(1) + "s") : "full video";
     }
     function resetTrim() {
-      // ponytail: deferred a frame — values set while hidden can paint stale knob positions
+      // ponytail: deferred a frame - values set while hidden can paint stale knob positions
       requestAnimationFrame(function() {
         veTrimStart.value = 0;
         veTrimEnd.value = 100;
@@ -1608,7 +1608,7 @@ document.addEventListener("DOMContentLoaded", async function() {
           veExport.disabled = false;
           return;
         }
-        // contract: backend expects camelCase keys (verified via live invoke probe) — keep as-is
+        // contract: backend expects camelCase keys (verified via live invoke probe) - keep as-is
         var result = await invoke("convert_video", {
           inputPath: veFilePath,
           outputPath: outputPath,
@@ -1641,9 +1641,9 @@ document.addEventListener("DOMContentLoaded", async function() {
         var data = await invoke("read_file_bytes", { path: veExportPath });
         var name = veExportPath.split(/[\\/]/).pop();
         pendingExportFile = new File([new Uint8Array(data)], name, { type: "video/webm" });
-        veStatus.textContent = "Video ready — close the editor and press Sync.";
+        veStatus.textContent = "Video ready - close the editor and press Sync.";
         veStatus.style.color = "#2ecc71";
-        $("asset-status").textContent = "Exported video ready — press Sync.";
+        $("asset-status").textContent = "Exported video ready - press Sync.";
         $("asset-status").style.color = "#2ecc71";
       } catch (e) {
         veStatus.textContent = "Error: " + e;
