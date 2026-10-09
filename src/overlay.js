@@ -30,6 +30,7 @@ function isVideoUrl(url) {
 }
 
 async function showJumpscare(username, videoUrl, volume) {
+  if (!videoUrl) return; // nothing to show — never queue or flash empty
   if (hideTimeout) { pendingShow = { username: username, videoUrl: videoUrl, volume: volume }; return; }
 
   labelEl.textContent = 'Jumpscared by: ' + (username || "???");
@@ -51,11 +52,6 @@ async function showJumpscare(username, videoUrl, volume) {
       labelEl.style.display = 'block';
       mediaDuration = await getImageDuration(videoUrl);
     }
-  } else {
-    imgEl.style.display = 'none';
-    videoEl.style.display = 'none';
-    try { videoEl.pause(); videoEl.removeAttribute('src'); videoEl.load(); } catch (_) {}
-    labelEl.style.display = 'none';
   }
 
   const duration = Math.max(mediaDuration, 1);

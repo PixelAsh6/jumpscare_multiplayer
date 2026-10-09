@@ -54,13 +54,17 @@ document.addEventListener("DOMContentLoaded", async function() {
   var autoRollInterval = null;
   var pingInterval = null;
   var cleanupInterval = null;
+  var assetPollBusy = false;
+  var autoRollBusy = false;
+  var pingBusy = false;
+  var cleanupBusy = false;
   var lastAssetVideoUrl = null;
   var syncedChance = 1;
   var syncedVideoUrl = "";
 
-  function loadSettings() { try { return JSON.parse(localStorage.getItem("jm_settings")); } catch(e) { return null; } }
+  function loadSettings() { try { var s = JSON.parse(localStorage.getItem("jm_settings")); return (s && typeof s === "object" && !Array.isArray(s)) ? s : null; } catch(e) { return null; } }
   function saveSettings(s) { localStorage.setItem("jm_settings", JSON.stringify(s)); }
-  function loadLobbies() { try { return JSON.parse(localStorage.getItem("jm_lobbies")) || []; } catch(e) { return []; } }
+  function loadLobbies() { try { var l = JSON.parse(localStorage.getItem("jm_lobbies")); return Array.isArray(l) ? l : []; } catch(e) { return []; } }
   function saveLobbies(list) { localStorage.setItem("jm_lobbies", JSON.stringify(list)); }
   function loadLastLobby() { return localStorage.getItem("jm_last_lobby"); }
   function saveLastLobby(name) { localStorage.setItem("jm_last_lobby", name); }
@@ -72,7 +76,7 @@ document.addEventListener("DOMContentLoaded", async function() {
   }
   function getShareString(lobby) { return "JUMPCARE:" + lobby.name + ":" + lobby.supabase_url + ":" + lobby.supabase_key; }
 
-  // Encrypted share strings (JUMPCARE2) — AES-GCM via WebCrypto, password shared out-of-band
+  // Encrypted share strings (JUMPSCARE prefix) — AES-GCM via WebCrypto, password shared out-of-band
   function b64url(bytes) { var bin = ""; bytes.forEach(function(b) { bin += String.fromCharCode(b); }); return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
   function unb64url(s) { s = s.replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; var bin = atob(s); var out = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
   async function encShare(url, key, password) {
@@ -103,7 +107,7 @@ document.addEventListener("DOMContentLoaded", async function() {
   window.__cryptoTest = { encShare: encShare, decShare: decShare }; // ponytail: test hook mirroring __showJumpscare
   async function renderShareString() {
     var el = $("share-string");
-    if (!currentLobby) return;
+    if (!el || !currentLobby) return;
     var s = loadSettings();
     var pw = s && s.share_password ? s.share_password : "";
     var name = currentLobby.name;
@@ -113,7 +117,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     }
     try {
       var b64 = await encShare(currentLobby.supabase_url, currentLobby.supabase_key, pw);
-      if (currentLobby && currentLobby.name === name) el.textContent = "JUMPCARE2:" + name + ":" + b64;
+      if (currentLobby && currentLobby.name === name) el.textContent = "JUMPSCARE:" + name + ":" + b64;
     } catch (_) {
       if (currentLobby && currentLobby.name === name) el.textContent = getShareString(currentLobby);
     }
@@ -131,27 +135,55 @@ document.addEventListener("DOMContentLoaded", async function() {
     if (map[name]) map[name].classList.add("active");
   }
 
+  var fitTimer = null;
+  function fitWindowToContent() {
+    // ponytail: grow-only, debounced — never fight manual resizes, never shrink under content.
+    // All OS sizes here are physical pixels (innerSize/outerSize); CSS px get scaled by devicePixelRatio.
+    if (fitTimer) clearTimeout(fitTimer);
+    fitTimer = setTimeout(async function() {
+      try {
+        var taoWin = window.__TAURI__ && window.__TAURI__.window;
+        if (!taoWin || !taoWin.getCurrentWindow) return;
+        var win = taoWin.getCurrentWindow();
+        var panel = document.querySelector(".panel-right") || document.documentElement;
+        var extra = panel.scrollHeight - panel.clientHeight;
+        if (extra <= 4) return;
+        var f = window.devicePixelRatio || 1;
+        var maxOuterH = (window.screen.availHeight || 1000) - 40;
+        if (maxOuterH <= window.outerHeight) return; // screen is full — growing is impossible, never shrink
+        var targetOuterH = Math.min(window.outerHeight + extra, maxOuterH);
+        var cur = await win.outerSize();
+        if (Math.abs(cur.height - targetOuterH * f) > 8 * f) {
+          await win.setSize(new taoWin.PhysicalSize(Math.round(cur.width), Math.round(targetOuterH * f)));
+        }
+      } catch (e) { console.error("fitWindowToContent failed:", e && e.message ? e.message : e); }
+    }, 400);
+  }
+
   function showStatus(el, msg, isErr) {
     if (!el) return;
     el.textContent = msg;
-    el.className = "status " + (isErr ? "error" : "success");
+    el.classList.remove("error", "success");
+    el.classList.add(isErr ? "error" : "success");
     el.classList.remove("hidden");
   }
 
   var modalOpen = false;
-  function showModal(title, buttonText, noInput) {
+  function showModal(title, buttonText, noInput, password) {
     if (modalOpen) return Promise.resolve(null); // ponytail: ignore double-clicks, first promise wins
     modalOpen = true;
     return new Promise(function(resolve) {
       $("modal-title").textContent = title;
       $("modal-ok").textContent = buttonText;
       $("modal-input").value = "";
+      $("modal-input").type = password ? "password" : "text";
       $("modal-input").style.display = noInput ? "none" : "";
       $("modal-overlay").classList.remove("hidden");
       if (!noInput) $("modal-input").focus(); else $("modal-ok").focus();
       function close(val) {
         modalOpen = false;
         $("modal-overlay").classList.add("hidden");
+        $("modal-input").type = "text";
         $("modal-ok").removeEventListener("click", onOk);
         $("modal-cancel").removeEventListener("click", onCancel);
         $("modal-overlay").removeEventListener("keydown", onKey);
@@ -175,7 +207,8 @@ document.addEventListener("DOMContentLoaded", async function() {
     await dbg("Setup: Continue clicked");
     var username = setupUsername.value.trim();
     if (!username) { showStatus(setupStatus, "Enter a username", true); return; }
-    saveSettings({ username: username, supabase_url: "", supabase_key: "", share_password: "", volume: 80 });
+    var prev = loadSettings() || {};
+    saveSettings({ username: username, supabase_url: prev.supabase_url || "", supabase_key: prev.supabase_key || "", share_password: prev.share_password || "", volume: (prev.volume !== undefined ? prev.volume : 80) });
     myUsername = username;
     showView("menu");
     renderLobbyList();
@@ -208,6 +241,12 @@ document.addEventListener("DOMContentLoaded", async function() {
     invoke("plugin:autostart|is_enabled").then(function(on) {
       $("settings-autostart").checked = !!on;
     }).catch(function() {});
+    // Hotkey status (backend-tracked, since registration errors are invisible in release)
+    invoke("hotkey_status").then(function(s) {
+      $("hotkey-status-text").textContent = "Force hotkey (F9): " + s;
+    }).catch(function() {
+      $("hotkey-status-text").textContent = "Force hotkey (F9): unknown";
+    });
   }
 
   $("btn-settings").addEventListener("click", async function() {
@@ -236,6 +275,18 @@ document.addEventListener("DOMContentLoaded", async function() {
     myUsername = username;
     showStatus($("settings-status"), "Settings saved!", false);
     renderShareString();
+    if (url && key) {
+      initSupabase(url, key);
+      if (currentLobby) {
+        currentLobby.supabase_url = url;
+        currentLobby.supabase_key = key;
+        addLobbyToHistory(currentLobby);
+        renderLobbyList();
+        subscribeToLobby();
+        refreshLobbyData();
+        renderVideoList();
+      }
+    }
   });
 
   // Volume slider ↔ text box sync
@@ -253,12 +304,16 @@ document.addEventListener("DOMContentLoaded", async function() {
     this.textContent = show ? "Hide" : "Show";
   });
   $("settings-autostart").addEventListener("change", async function() {
+    var box = this;
+    box.disabled = true;
     try {
-      await invoke(this.checked ? "plugin:autostart|enable" : "plugin:autostart|disable");
-      showStatus($("settings-status"), this.checked ? "App will start with Windows." : "Autostart disabled.", false);
+      await invoke(box.checked ? "plugin:autostart|enable" : "plugin:autostart|disable");
+      showStatus($("settings-status"), box.checked ? "App will start with Windows." : "Autostart disabled.", false);
     } catch (e) {
-      this.checked = !this.checked;
+      box.checked = !box.checked;
       showStatus($("settings-status"), "Autostart failed: " + e, true);
+    } finally {
+      box.disabled = false;
     }
   });
   await dbg("Settings listeners bound");
@@ -362,7 +417,7 @@ document.addEventListener("DOMContentLoaded", async function() {
       var input = $("join-string-input").value.trim();
       if (!input) { showStatus($("join-status"), "Paste the share string", true); return; }
       var parts = input.split(":");
-      var isV2 = parts[0] === "JUMPCARE2";
+      var isV2 = parts[0] === "JUMPSCARE";
       if ((!isV2 && (parts.length < 4 || parts[0] !== "JUMPCARE")) || (isV2 && parts.length < 3)) {
         showStatus($("join-status"), "Invalid share string format", true); return;
       }
@@ -371,8 +426,8 @@ document.addEventListener("DOMContentLoaded", async function() {
       var supabaseUrl = "";
       var supabaseKey = "";
       if (isV2) {
-        var pw = await showModal("Enter the share password", "Join");
-        if (!pw) return;
+        var pw = await showModal("Enter the share password", "Join", false, true);
+        if (!pw) { showStatus($("join-status"), "Password required to join.", true); return; }
         try {
           var dec = await decShare(parts.slice(2).join(":"), pw);
           supabaseUrl = dec.url;
@@ -380,9 +435,15 @@ document.addEventListener("DOMContentLoaded", async function() {
         } catch (_) {
           showStatus($("join-status"), "Wrong password or corrupted share string.", true); return;
         }
-      } else {
+      }       else {
         supabaseUrl = parts.slice(2, parts.length - 1).join(":");
         supabaseKey = parts[parts.length - 1];
+      }
+      try {
+        var parsed = new URL(supabaseUrl);
+        if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error("bad protocol");
+      } catch (_) {
+        showStatus($("join-status"), "Invalid Supabase URL in share string.", true); return;
       }
       if (!supabaseUrl || !supabaseKey) { showStatus($("join-status"), "Invalid share string (missing URL or key)", true); return; }
       myPlayerId = myPlayerId || crypto.randomUUID(); savePlayerId();
@@ -396,7 +457,7 @@ document.addEventListener("DOMContentLoaded", async function() {
       var up = await withTimeout(supabase.from("players").upsert({
         id: myPlayerId, room_code: lobbyName, username: myUsername,
         is_admin: isAdmin, online: true, last_seen: new Date().toISOString()
-      }), 20000, "Join lobby");
+      }, { onConflict: "id" }), 20000, "Join lobby");
       if (up.error) { showStatus($("join-status"), "Join failed: " + up.error.message, true); return; }
       currentLobby = { name: lobbyName, supabase_url: supabaseUrl, supabase_key: supabaseKey };
       saveLastLobby(lobbyName);
@@ -430,7 +491,10 @@ document.addEventListener("DOMContentLoaded", async function() {
       var div = document.createElement("div");
       div.className = "lobby-item" + (currentLobby && currentLobby.name === lobby.name ? " active" : "");
       div.innerHTML = "<span class=\"name\">" + esc(lobby.name) + "</span><button class=\"delete-btn\" title=\"Delete\" aria-label=\"Delete lobby\">&times;</button>";
-      div.addEventListener("click", function() { joinExistingLobby(lobby); });
+      div.addEventListener("click", function() {
+        if (joiningLobby) { pendingJoin = lobby; return; }
+        joinExistingLobby(lobby);
+      });
       div.querySelector(".delete-btn").addEventListener("click", function(e) {
         e.stopPropagation();
         deleteLobby(lobby.name);
@@ -440,6 +504,7 @@ document.addEventListener("DOMContentLoaded", async function() {
   }
 
   var joiningLobby = false;
+  var pendingJoin = null; // ponytail: clicks landing mid-join queue instead of dying silently
   function friendlyJoinError(err) {
     if (err && err.code === "PGRST116") return "lobby not found on Supabase (was it deleted?).";
     return err && err.message ? err.message : "lobby not found on Supabase.";
@@ -461,7 +526,7 @@ document.addEventListener("DOMContentLoaded", async function() {
       var up = await withTimeout(supabase.from("players").upsert({
         id: myPlayerId, room_code: lobby.name, username: myUsername,
         is_admin: result.data.admin_name === myUsername, online: true, last_seen: new Date().toISOString()
-      }), 20000, "Join lobby");
+      }, { onConflict: "id" }), 20000, "Join lobby");
       if (up.error) { if (!silent) alert("Could not join '" + lobby.name + "': " + up.error.message); return false; }
       currentLobby = lobby;
       saveLastLobby(lobby.name);
@@ -480,6 +545,7 @@ document.addEventListener("DOMContentLoaded", async function() {
       return false;
     } finally {
       joiningLobby = false;
+      if (pendingJoin) { var p = pendingJoin; pendingJoin = null; joinExistingLobby(p); }
     }
   }
 
@@ -488,8 +554,12 @@ document.addEventListener("DOMContentLoaded", async function() {
     var exists = list.find(function(l) { return l.name === lobby.name; });
     if (!exists) {
       list.push({ name: lobby.name, supabase_url: lobby.supabase_url, supabase_key: lobby.supabase_key });
-      saveLobbies(list);
+    } else {
+      // ponytail: same name, new backend — refresh stale credentials instead of keeping them forever
+      exists.supabase_url = lobby.supabase_url;
+      exists.supabase_key = lobby.supabase_key;
     }
+    saveLobbies(list);
   }
 
   function deleteLobby(name) {
@@ -526,16 +596,26 @@ document.addEventListener("DOMContentLoaded", async function() {
   async function refreshLobbyData() {
     if (!currentLobby || !supabase) return;
     try {
-      var result = await supabase.from("lobbies").select("*").eq("room_code", currentLobby.name).single();
+      var result = await withTimeout(supabase.from("lobbies").select("*").eq("room_code", currentLobby.name).single(), 20000, "Refresh");
       var lobby = result.data;
     if (lobby) {
+      if (document.activeElement !== $("admin-chance")) {
+        $("admin-chance").value = lobby.chance;
+      }
       $("detail-chance").textContent = Number(lobby.chance).toFixed(2) + "%";
-      $("admin-chance").value = lobby.chance;
+      isAdmin = (lobby.admin_name === myUsername);
+      if (isAdmin) {
+        $("admin-panel").classList.remove("hidden");
+        $("btn-delete-lobby").classList.remove("hidden");
+      } else {
+        $("admin-panel").classList.add("hidden");
+        $("btn-delete-lobby").classList.add("hidden");
+      }
       syncedChance = Number(lobby.chance); // ponytail: snapshot for sync-what-changed
       syncedVideoUrl = lobby.video_url || "";
       $("random-mode").checked = !!lobby.random_mode;
     }
-      var plResult = await supabase.from("players").select("*").eq("room_code", currentLobby.name).eq("online", true);
+      var plResult = await withTimeout(supabase.from("players").select("*").eq("room_code", currentLobby.name).eq("online", true), 20000, "Refresh players");
       var pl = plResult.data;
       if (pl) {
         players = pl;
@@ -562,23 +642,26 @@ document.addEventListener("DOMContentLoaded", async function() {
   // REALTIME
   function subscribeToLobby() {
     if (!supabase) return;
-    if (lobbyChannel) { try { supabase.removeChannel(lobbyChannel); } catch (_) {} }
+    if (lobbyChannel) { try { var old = supabase.removeChannel(lobbyChannel); if (old && old.catch) old.catch(function() {}); } catch (_) {} }
     if (!currentLobby) return;
     lobbyChannel = supabase.channel(currentLobby.name);
+    var roomFilter = "room_code=eq." + encodeURIComponent(currentLobby.name);
     lobbyChannel
-      .on("postgres_changes", { event: "*", schema: "public", table: "players", filter: "room_code=eq." + currentLobby.name }, function() { refreshLobbyData(); })
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "lobbies", filter: "room_code=eq." + currentLobby.name }, function(payload) {
+      .on("postgres_changes", { event: "*", schema: "public", table: "players", filter: roomFilter }, function() { refreshLobbyData(); })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "lobbies", filter: roomFilter }, function(payload) {
         var l = payload.new;
         $("detail-chance").textContent = Number(l.chance).toFixed(2) + "%";
         $("admin-chance").value = l.chance;
         refreshLobbyData();
       })
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "jumpscares", filter: "room_code=eq." + currentLobby.name }, function(payload) {
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "jumpscares", filter: roomFilter }, function(payload) {
         if (payload.new.player_id !== myPlayerId) {
           triggerJumpscare(payload.new.username);
         }
       })
-      .subscribe();
+      .subscribe(function(status, err) {
+        if (status !== "SUBSCRIBED") console.error("Realtime subscribe status:", status, err || "");
+      });
   }
 
   // VIDEO LIBRARY — click a row to switch instantly, × deletes from Supabase
@@ -589,7 +672,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     if (!currentLobby || !supabase) return;
     var vids = [];
     try {
-      var res = await supabase.storage.from("jumpscare-assets").list(currentLobby.name);
+      var res = await withTimeout(supabase.storage.from("jumpscare-assets").list(currentLobby.name, { limit: 1000 }), 20000, "Video list");
       vids = ((res.data) || [])
         .filter(function(f) { return f.id && /\.(webm|mp4|mov|m4v|gif|png|webp)$/i.test(f.name); })
         .map(function(f) {
@@ -606,7 +689,11 @@ document.addEventListener("DOMContentLoaded", async function() {
       var div = document.createElement("div");
       var isCur = baseUrl(v.url) === cur;
       div.className = "player-item video-item" + (isCur ? " current" : "");
-      div.innerHTML = "<span title=\"" + esc(v.name) + "\">" + esc(v.name) + (isCur ? " ●" : "") + "</span>";
+      var span = document.createElement("span");
+      span.textContent = v.name + (isCur ? " ●" : "");
+      span.setAttribute("title", v.name);
+      div.innerHTML = "";
+      div.appendChild(span);
       var del = document.createElement("button");
       del.className = "tiny danger";
       del.textContent = "×";
@@ -620,6 +707,7 @@ document.addEventListener("DOMContentLoaded", async function() {
       })(v.url);
       el.appendChild(div);
     });
+    fitWindowToContent();
   }
 
   var switchingVideo = false;
@@ -632,7 +720,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     statusEl.style.color = "#999";
     try {
       var fresh = baseUrl(url) + "?t=" + Date.now();
-      var res = await supabase.from("lobbies").update({ video_url: fresh }).eq("room_code", currentLobby.name);
+      var res = await withTimeout(supabase.from("lobbies").update({ video_url: fresh }).eq("room_code", currentLobby.name), 20000, "Switch video");
       if (res.error) throw new Error(res.error.message);
       syncedVideoUrl = fresh;
       statusEl.textContent = "Video switched.";
@@ -642,8 +730,9 @@ document.addEventListener("DOMContentLoaded", async function() {
     } catch (err) {
       statusEl.textContent = "Switch failed: " + (err && err.message ? err.message : err);
       statusEl.style.color = "#e74c3c";
+    } finally {
+      switchingVideo = false;
     }
-    switchingVideo = false;
   }
 
   async function deleteVideo(v) {
@@ -653,10 +742,10 @@ document.addEventListener("DOMContentLoaded", async function() {
     try {
       statusEl.textContent = "Deleting video...";
       statusEl.style.color = "#999";
-      var del = await supabase.storage.from("jumpscare-assets").remove([v.path]);
+      var del = await withTimeout(supabase.storage.from("jumpscare-assets").remove([v.path]), 60000, "Delete video");
       if (del.error) throw new Error(del.error.message);
       if (baseUrl(v.url) === baseUrl(syncedVideoUrl)) {
-        var up = await supabase.from("lobbies").update({ video_url: "" }).eq("room_code", currentLobby.name);
+        var up = await withTimeout(supabase.from("lobbies").update({ video_url: "" }).eq("room_code", currentLobby.name), 20000, "Clear video");
         if (up.error) throw new Error(up.error.message);
         syncedVideoUrl = "";
       }
@@ -674,7 +763,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     if (!currentLobby || !supabase) return;
     var on = this.checked;
     try {
-      var res = await supabase.from("lobbies").update({ random_mode: on }).eq("room_code", currentLobby.name);
+      var res = await withTimeout(supabase.from("lobbies").update({ random_mode: on }).eq("room_code", currentLobby.name), 20000, "Random mode");
       if (res.error) throw new Error(res.error.message);
       showStatus($("asset-status"), on ? "Random mode on." : "Random mode off.", false);
     } catch (err) {
@@ -720,7 +809,7 @@ document.addEventListener("DOMContentLoaded", async function() {
         statusEl.textContent = "Uploading exported video...";
         var efile = pendingExportFile;
         var epath = currentLobby.name + "/video_" + efile.name.replace(/[^\w.\-]+/g, "_");
-        var eup = await supabase.storage.from("jumpscare-assets").upload(epath, efile, { upsert: true });
+        var eup = await withTimeout(supabase.storage.from("jumpscare-assets").upload(epath, efile, { upsert: true }), 120000, "Upload video");
         if (eup.error) {
           statusEl.textContent = "Video upload failed: " + eup.error.message;
           statusEl.style.color = "#e74c3c";
@@ -740,7 +829,7 @@ document.addEventListener("DOMContentLoaded", async function() {
           if (fext === "mp4" || fext === "m4v" || fext === "avi" || fext === "mkv" || fext === "mov") opaqueNote = true;
           var safeBase = file.name.replace(/[^\w.\-]+/g, "_");
           var path = currentLobby.name + "/video_" + safeBase;
-          var upResult = await supabase.storage.from("jumpscare-assets").upload(path, file, { upsert: true });
+          var upResult = await withTimeout(supabase.storage.from("jumpscare-assets").upload(path, file, { upsert: true }), 120000, "Upload video");
           if (upResult.error) {
             statusEl.textContent = "Video upload failed: " + upResult.error.message;
             statusEl.style.color = "#e74c3c";
@@ -760,7 +849,7 @@ document.addEventListener("DOMContentLoaded", async function() {
         return;
       }
       statusEl.textContent = "Saving...";
-      var errResult = await supabase.from("lobbies").update(update).eq("room_code", currentLobby.name);
+      var errResult = await withTimeout(supabase.from("lobbies").update(update).eq("room_code", currentLobby.name), 20000, "Save");
       if (errResult.error) {
         statusEl.textContent = "Error: " + errResult.error.message;
         statusEl.style.color = "#e74c3c";
@@ -796,14 +885,14 @@ document.addEventListener("DOMContentLoaded", async function() {
     try {
       statusEl.textContent = "Deleting...";
       statusEl.style.color = "#999";
-      var listed = await supabase.storage.from("jumpscare-assets").list(currentLobby.name);
+      var listed = await withTimeout(supabase.storage.from("jumpscare-assets").list(currentLobby.name, { limit: 1000 }), 20000, "List videos");
       if (listed.error) throw new Error(listed.error.message);
       if (listed.data && listed.data.length) {
         var paths = listed.data.map(function(f) { return currentLobby.name + "/" + f.name; });
-        var del = await supabase.storage.from("jumpscare-assets").remove(paths);
+        var del = await withTimeout(supabase.storage.from("jumpscare-assets").remove(paths), 120000, "Delete assets");
         if (del.error) throw new Error(del.error.message);
       }
-      var up = await supabase.from("lobbies").update({ chance: 1.0, video_url: "" }).eq("room_code", currentLobby.name);
+      var up = await withTimeout(supabase.from("lobbies").update({ chance: 1.0, video_url: "" }).eq("room_code", currentLobby.name), 20000, "Reset lobby");
       if (up.error) throw new Error(up.error.message);
       $("video-file").value = "";
       clearVideo = false;
@@ -823,18 +912,22 @@ document.addEventListener("DOMContentLoaded", async function() {
     }
   });
 
-  // ADMIN - FORCE JUMPSCARE (shared by button + F12 hotkey)
+  // ADMIN - FORCE JUMPSCARE (shared by button + F9 hotkey)
+  var lastForceAt = 0;
   async function forceJumpscare() {
     await dbg("Force jumpscare");
     if (!currentLobby || !supabase || !isAdmin) return;
+    var nowMs = Date.now();
+    if (nowMs - lastForceAt < 2000) return; // ponytail: debounce — cooldown already gates the overlay, this gates DB row spam
+    lastForceAt = nowMs;
     try {
-      var ins = await supabase.from("jumpscares").insert({
+      var ins = await withTimeout(supabase.from("jumpscares").insert({
         room_code: currentLobby.name,
         player_id: myPlayerId,
         username: myUsername
-      });
+      }), 20000, "Force scare");
       if (ins.error) { console.error("Force jumpscare failed:", ins.error.message); return; }
-      triggerJumpscare(myUsername);
+      triggerJumpscare(myUsername, true); // manual force bypasses the auto-scare cooldown
     } catch (err) { console.error("Force jumpscare failed:", err); }
   }
   $("btn-force-jumpscare").addEventListener("click", forceJumpscare);
@@ -857,81 +950,98 @@ document.addEventListener("DOMContentLoaded", async function() {
         }).catch(function() {});
     }
     assetPollInterval = setInterval(async function() {
-      if (!currentLobby || isAdmin || !supabase) return;
+      if (!currentLobby || isAdmin || !supabase || assetPollBusy) return;
+      assetPollBusy = true;
       try {
-        var result = await supabase.from("lobbies").select("video_url").eq("room_code", currentLobby.name).single();
+        var result = await withTimeout(supabase.from("lobbies").select("video_url").eq("room_code", currentLobby.name).single(), 20000, "Asset poll");
         var lobby = result.data;
         if (lobby && lobby.video_url && lobby.video_url !== lastAssetVideoUrl) {
           lastAssetVideoUrl = lobby.video_url || null;
           triggerJumpscare("Asset Updated");
         }
-      } catch (_) {}
+      } catch (_) {} finally {
+        assetPollBusy = false;
+      }
     }, 60000);
   }
   function stopAssetPolling() {
     if (assetPollInterval) clearInterval(assetPollInterval);
+    assetPollInterval = null;
   }
 
   // AUTO-ROLL: every 5s each player rolls against chance
   function startAutoRoll() {
     stopAutoRoll();
     autoRollInterval = setInterval(async function() {
-      if (!currentLobby || !supabase) return;
+      if (!currentLobby || !supabase || autoRollBusy) return;
+      autoRollBusy = true;
       try {
-        var result = await supabase.from("lobbies").select("chance").eq("room_code", currentLobby.name).single();
+        var result = await withTimeout(supabase.from("lobbies").select("chance").eq("room_code", currentLobby.name).single(), 20000, "Auto-roll");
         var lobby = result.data;
         if (!lobby) return;
-        var plResult = await supabase.from("players").select("id").eq("room_code", currentLobby.name).eq("online", true);
+        var plResult = await withTimeout(supabase.from("players").select("id").eq("room_code", currentLobby.name).eq("online", true), 20000, "Auto-roll players");
         var pl = plResult.data;
         var count = (pl && pl.length) || 1;
         var perPlayer = lobby.chance / count;
         var roll = Math.random() * 100;
         if (roll <= perPlayer) {
-          await supabase.from("jumpscares").insert({
+          var autoIns = await withTimeout(supabase.from("jumpscares").insert({
             room_code: currentLobby.name,
             player_id: myPlayerId,
             username: myUsername
-          });
-      triggerJumpscare(myUsername, true); // manual force bypasses the auto-scare cooldown
+          }), 20000, "Auto-roll scare");
+          if (autoIns.error) return;
+          triggerJumpscare(myUsername);
         }
-      } catch (_) {}
+      } catch (_) {} finally {
+        autoRollBusy = false;
+      }
     }, 5000);
   }
   function stopAutoRoll() {
     if (autoRollInterval) clearInterval(autoRollInterval);
+    autoRollInterval = null;
   }
 
   // PLAYER PING — update last_seen every 30s so others can detect stale players
   function startPing() {
     stopPing();
     pingInterval = setInterval(async function() {
-      if (!currentLobby || !supabase || !myPlayerId) return;
+      if (!currentLobby || !supabase || !myPlayerId || pingBusy) return;
+      pingBusy = true;
       try {
-        await supabase.from("players").update({ last_seen: new Date().toISOString() }).eq("id", myPlayerId);
-      } catch (_) {}
+        await withTimeout(supabase.from("players").update({ last_seen: new Date().toISOString() }).eq("id", myPlayerId), 20000, "Ping");
+      } catch (_) {} finally {
+        pingBusy = false;
+      }
     }, 30000);
   }
   function stopPing() {
     if (pingInterval) clearInterval(pingInterval);
+    pingInterval = null;
   }
 
   // STALE CLEANUP — mark players offline if last_seen > 60s ago
   function startCleanup() {
     stopCleanup();
     cleanupInterval = setInterval(async function() {
-      if (!currentLobby || !supabase) return;
+      if (!currentLobby || !supabase || cleanupBusy) return;
+      cleanupBusy = true;
       try {
         var cutoff = new Date(Date.now() - 60000).toISOString();
-        await supabase.from("players").update({ online: false })
+        await withTimeout(supabase.from("players").update({ online: false })
           .eq("room_code", currentLobby.name)
           .eq("online", true)
-          .lt("last_seen", cutoff);
+          .lt("last_seen", cutoff), 20000, "Cleanup");
         refreshLobbyData();
-      } catch (_) {}
+      } catch (_) {} finally {
+        cleanupBusy = false;
+      }
     }, 30000);
   }
   function stopCleanup() {
     if (cleanupInterval) clearInterval(cleanupInterval);
+    cleanupInterval = null;
   }
 
   // JUMPSCARE
@@ -940,7 +1050,7 @@ document.addEventListener("DOMContentLoaded", async function() {
   function baseUrl(u) { return (u || "").split("?")[0]; }
   async function pickRandomVideo(current) {
     try {
-      var listRes = await supabase.storage.from("jumpscare-assets").list(currentLobby.name);
+      var listRes = await withTimeout(supabase.storage.from("jumpscare-assets").list(currentLobby.name, { limit: 1000 }), 20000, "Video list");
       var vids = ((listRes.data) || [])
         .filter(function(f) { return f.id && /\.(webm|mp4|mov|m4v)$/i.test(f.name); })
         .map(function(f) { return currentLobby.name + "/" + f.name; });
@@ -955,7 +1065,7 @@ document.addEventListener("DOMContentLoaded", async function() {
   async function triggerJumpscare(username, skipCooldown) {
     if (!currentLobby || !supabase) return;
     try {
-      var result = await supabase.from("lobbies").select("video_url, random_mode").eq("room_code", currentLobby.name).single();
+      var result = await withTimeout(supabase.from("lobbies").select("video_url, random_mode").eq("room_code", currentLobby.name).single(), 20000, "Scare");
       var lobby = result.data;
       var vid = lobby ? lobby.video_url : "";
       if (lobby && lobby.random_mode) {
@@ -982,10 +1092,12 @@ document.addEventListener("DOMContentLoaded", async function() {
 
   // LEAVE / DISCONNECT
   async function leaveLobby() {
-    if (myPlayerId && supabase) {
-      await supabase.from("players").update({ online: false }).eq("id", myPlayerId);
-    }
-    if (lobbyChannel && supabase) supabase.removeChannel(lobbyChannel);
+    try {
+      if (myPlayerId && supabase) {
+        await withTimeout(supabase.from("players").update({ online: false }).eq("id", myPlayerId), 10000, "Leave");
+      }
+    } catch (_) {}
+    if (lobbyChannel && supabase) { try { var pr = supabase.removeChannel(lobbyChannel); if (pr && pr.catch) pr.catch(function() {}); } catch (_) {} }
     stopAssetPolling();
     stopAutoRoll();
     stopPing();
@@ -993,6 +1105,12 @@ document.addEventListener("DOMContentLoaded", async function() {
     currentLobby = null;
     lobbyChannel = null;
     players = [];
+    isAdmin = false;
+    clearVideo = false;
+    pendingExportFile = null;
+    if ($("video-file")) $("video-file").value = "";
+    if ($("btn-clear-video")) $("btn-clear-video").textContent = "Clear";
+    localStorage.removeItem("jm_last_lobby");
   }
 
   $("btn-leave-lobby").addEventListener("click", async function() {
@@ -1006,10 +1124,15 @@ document.addEventListener("DOMContentLoaded", async function() {
   $("btn-delete-lobby").addEventListener("click", async function() {
     await dbg("Delete lobby clicked");
     if (!currentLobby) return;
-    await supabase.from("jumpscares").delete().eq("room_code", currentLobby.name);
-    await supabase.from("players").delete().eq("room_code", currentLobby.name);
-    await supabase.from("lobbies").delete().eq("room_code", currentLobby.name);
-    deleteLobby(currentLobby.name);
+    if (!await showModal("Delete lobby '" + currentLobby.name + "' from Supabase? This kicks everyone out.", "Delete", true)) return;
+    try {
+      await withTimeout(supabase.from("jumpscares").delete().eq("room_code", currentLobby.name), 20000, "Delete");
+      await withTimeout(supabase.from("players").delete().eq("room_code", currentLobby.name), 20000, "Delete");
+      await withTimeout(supabase.from("lobbies").delete().eq("room_code", currentLobby.name), 20000, "Delete");
+      deleteLobby(currentLobby.name);
+    } catch (err) {
+      alert("Delete failed: " + (err && err.message ? err.message : err));
+    }
   });
 
   // NEW LOBBY
@@ -1039,12 +1162,12 @@ document.addEventListener("DOMContentLoaded", async function() {
       await cleanupOldRows(name);
       var errResult = await withTimeout(supabase.from("lobbies").upsert({
         room_code: name, host_id: myPlayerId, admin_name: myUsername, chance: 1.0
-      }), 20000, "Create lobby");
+      }, { onConflict: "room_code" }), 20000, "Create lobby");
       if (errResult.error) { alert("Error: " + errResult.error.message); return; }
       var pUp = await withTimeout(supabase.from("players").upsert({
         id: myPlayerId, room_code: name, username: myUsername,
         is_admin: true, online: true, last_seen: new Date().toISOString()
-      }), 20000, "Join lobby");
+      }, { onConflict: "id" }), 20000, "Join lobby");
       if (pUp.error) { alert("Error: " + pUp.error.message); return; }
       currentLobby = { name: name, supabase_url: settings.supabase_url, supabase_key: settings.supabase_key };
       isAdmin = true;
@@ -1087,7 +1210,7 @@ document.addEventListener("DOMContentLoaded", async function() {
 
   $("link-supabase-guide").addEventListener("click", function(e) {
     e.preventDefault();
-    invoke("show_guide");
+    invoke("show_guide").catch(function(err) { console.error("Guide failed:", err); });
   });
 
   // AUTO-JOIN
@@ -1100,17 +1223,23 @@ document.addEventListener("DOMContentLoaded", async function() {
   }
 
   // BEFORE UNLOAD
-  window.addEventListener("beforeunload", async function() {
+  window.addEventListener("beforeunload", function() {
     if (myPlayerId && supabase) {
-      await supabase.from("players").update({ online: false }).eq("id", myPlayerId);
+      try {
+        var p = supabase.from("players").update({ online: false }).eq("id", myPlayerId);
+        if (p && p.catch) p.catch(function() {});
+      } catch (_) {}
     }
   });
 
   // QUIT REQUESTED from tray
   window.__TAURI__.event.listen("quit-requested", async function() {
-    if (myPlayerId && supabase) {
-      await supabase.from("players").update({ online: false }).eq("id", myPlayerId);
-    }
+    try {
+      if (myPlayerId && supabase) {
+        await withTimeout(supabase.from("players").update({ online: false }).eq("id", myPlayerId), 1200, "Quit");
+      }
+    } catch (_) {}
+    try { emit("quit-ack", {}); } catch (_) {}
   });
 
   // VIDEO EDITOR
@@ -1233,6 +1362,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     }
     $("ve-file-input").addEventListener("change", async function(e) {
       if (!this.files.length) return;
+      try {
       var file = this.files[0];
       veOriginalName = file.name;
       veExportPath = null;
@@ -1247,6 +1377,10 @@ document.addEventListener("DOMContentLoaded", async function() {
       veVideo.onloadeddata = onVideoLoaded;
       // Store file for export — write to temp when user clicks Export
       vePendingFile = file;
+      } catch (e) {
+        veStatus.textContent = "Error: " + e;
+        veStatus.style.color = "#e74c3c";
+      }
     });
 
     // URL import — yt-dlp to temp, then the normal path-preview flow
@@ -1254,6 +1388,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     veDownload.addEventListener("click", async function() {
       var url = $("ve-url").value.trim();
       if (!url) { veStatus.textContent = "Paste a video URL first."; veStatus.style.color = "#e74c3c"; return; }
+      if (veDownload.disabled) return;
       veDownload.disabled = true;
       veStatus.textContent = "Starting download...";
       veStatus.style.color = "#e67e22";
@@ -1261,8 +1396,10 @@ document.addEventListener("DOMContentLoaded", async function() {
       var dlResult = null;
       var dlError = null;
       invoke("download_url", { url: url }).then(function(r) { dlResult = r; dlDone = true; }, function(e) { dlError = e; dlDone = true; });
+      var waited = 0;
       while (!dlDone) {
         if (veOverlay.classList.contains("hidden")) break; // user closed the editor meanwhile
+        if (waited++ > 1000) { dlError = dlError || "Download timed out."; dlDone = true; break; }
         await new Promise(function(r) { setTimeout(r, 1000); });
         try {
           var bytes = parseInt(await invoke("download_progress"), 10) || 0;
@@ -1336,12 +1473,14 @@ document.addEventListener("DOMContentLoaded", async function() {
       if (veAnimFrame) cancelAnimationFrame(veAnimFrame);
       function frame() {
         if (!veVideo.src || veVideo.paused) return;
-        var trim = trimSeconds();
-        // ponytail: loop inside the trim so the preview shows exactly what export will cut
-        if (trim.dur && trim.t1 > trim.t0 && (veVideo.currentTime < trim.t0 - 0.05 || veVideo.currentTime >= trim.t1)) {
-          veVideo.currentTime = trim.t0;
-        }
-        renderKeyedFrame();
+        try {
+          var trim = trimSeconds();
+          // ponytail: loop inside the trim so the preview shows exactly what export will cut
+          if (trim.dur && trim.t1 > trim.t0 && (veVideo.currentTime < trim.t0 - 0.05 || veVideo.currentTime >= trim.t1)) {
+            veVideo.currentTime = trim.t0;
+          }
+          renderKeyedFrame();
+        } catch (_) { return; }
         veAnimFrame = requestAnimationFrame(frame);
       }
       frame();
@@ -1355,11 +1494,13 @@ document.addEventListener("DOMContentLoaded", async function() {
 
     veCanvas.addEventListener("click", function(e) {
       var rect = veCanvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
       var scaleX = veCanvas.width / rect.width;
       var scaleY = veCanvas.height / rect.height;
-      var x = Math.floor((e.clientX - rect.left) * scaleX);
-      var y = Math.floor((e.clientY - rect.top) * scaleY);
-      var pixel = veCtx.getImageData(x, y, 1, 1).data;
+      var x = Math.max(0, Math.min(veCanvas.width - 1, Math.floor((e.clientX - rect.left) * scaleX)));
+      var y = Math.max(0, Math.min(veCanvas.height - 1, Math.floor((e.clientY - rect.top) * scaleY)));
+      var pixel;
+      try { pixel = veCtx.getImageData(x, y, 1, 1).data; } catch (_) { return; }
       var hex = "#" + ((1 << 24) + (pixel[0] << 16) + (pixel[1] << 8) + pixel[2]).toString(16).slice(1);
       veColor.value = hex;
       veColorHex.textContent = hex;
@@ -1522,6 +1663,7 @@ document.addEventListener("DOMContentLoaded", async function() {
     showView("menu");
     renderLobbyList();
     autoJoinLast();
+    setTimeout(fitWindowToContent, 1500);
   } else {
     showView("setup");
   }

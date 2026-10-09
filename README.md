@@ -4,12 +4,12 @@ Scare your friends across multiple PCs. An admin syncs transparent jumpscare vid
 
 ## What it does
 
-- **Lobbies** — create/join by encrypted share string (`JUMPCARE2:` + a share password you set in Settings).
+- **Lobbies** — create/join by encrypted share string (`JUMPSCARE:` + a share password you set in Settings).
 - **Video library** — upload multiple videos per lobby, click one to switch instantly, per-video delete, random-video-each-scare mode.
 - **Smart sync** — only uploads what changed (video, chance); never re-uploads the same file twice.
 - **Video editor** — chroma-key any video (MP4/MKV/AVI/WebM/GIF/PNG) to transparent WebM, frame-accurate trimming (sliders + arrow keys), tolerance + click-to-pick color, live keyed preview, URL import (YouTube/links via yt-dlp), custom output names.
 - **Overlay** — transparent, always-on-top, clickthrough, never steals focus; follows the focused monitor across multi-monitor setups; overlapping scares queue instead of freezing.
-- **Force (button + F12) and Preview** — admin force-fires to everyone; preview plays only locally. Auto-scares roll against lobby chance with a 10s cooldown (manual triggers bypass it).
+- **Force (button + F9) and Preview** — admin force-fires to everyone; preview plays only locally. Auto-scares roll against lobby chance with a 10s cooldown (manual triggers bypass it).
 - **System integration** — tray icon (minimize/quit), start-with-Windows toggle (starts minimized), setup guide built in.
 
 ## Install (for players)
@@ -20,7 +20,7 @@ Scare your friends across multiple PCs. An admin syncs transparent jumpscare vid
    - Install **yt-dlp** (URL downloads) — one click, silent.
    - Paste your **Supabase URL + anon key** (see the in-app Setup Guide, step by step) and set a **Share Password**.
    - Binaries live in `dependencies/` next to the exe (falls back to `%LOCALAPPDATA%\jumpscare-multiplayer\` when the exe folder isn't writable).
-3. Create a lobby with **+ New**, share the `JUMPCARE2:` string **and** the password separately.
+3. Create a lobby with **+ New**, share the `JUMPSCARE:` string **and** the password separately.
 4. Exported videos land in `transparent_videos/` next to the exe.
 
 ## Modify & compile (for developers)
@@ -46,11 +46,24 @@ One free project per host. Run the SQL in the in-app Setup Guide (creates `lobbi
 
 | Action | How |
 |---|---|
-| Force scare (admin) | Button, or **F12** anywhere |
+| Force scare (admin) | Button, or **F9** anywhere |
 | Preview (admin, local only) | Preview Jumpscare button |
 | Minimize to tray | Close window / tray icon |
 | Start with Windows | Settings checkbox (starts minimized) |
 | Cooldown | 10s on auto-scares; manual triggers bypass |
+
+## Resource usage
+
+Measured on Windows (Task Manager maximums during a scare; averages sampled idle over 10s):
+
+| Process | Avg (idle) | Max (scare playing) |
+|---|---|---|
+| WebView2 rendering (3 windows) | ~255 MB, ~0% CPU | 192.9 MB, 5.0% CPU, 1.2% GPU |
+| Jumpscare Multiplayer (exe) | ~37 MB, 0% CPU | 28.7 MB, 0% CPU |
+| Jumpscare Overlay | ~13 MB, 0% CPU | 12.9 MB, 0% CPU |
+| Whole app footprint | ~570 MB | ~650 MB (+video decode) |
+
+Idle is effectively 0% CPU everywhere; a scare adds ~4–5 MB and brief 1–3% CPU blips. Most memory is WebView2 runtime pages shared with Edge, and avg/max come from different meters, so compare rows loosely.
 
 ## License
 

@@ -50,6 +50,11 @@ debug/
 *.log
 transparent_videos/
 dependencies/
+debug-port.bat
+imgui.ini
+
+# Local backups (never pushed)
+backup_*/
 
 # Dead code kept locally, never pushed (no references from the build)
 src-tauri/src/relay.rs

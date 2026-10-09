@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: blob: data:; media-src 'self' https: blob: data:; connect-src 'self' ipc: http://ipc.localhost https://*.supabase.co wss://*.supabase.co https: wss:"
     }
   },
   "bundle": {

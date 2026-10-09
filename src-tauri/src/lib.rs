@@ -16,10 +16,15 @@ pub struct LogState {
 impl LogState {
     fn new() -> Self {
         // ponytail: never panic at startup — logging is best-effort
+        let path = std::env::temp_dir().join("jumpscare_debug.log");
+        // cap the log at ~2MB — truncate on startup so it can't grow forever
+        if std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) > 2 * 1024 * 1024 {
+            let _ = std::fs::write(&path, "");
+        }
         let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(std::env::temp_dir().join("jumpscare_debug.log"))
+            .open(&path)
             .ok();
         Self {
             file: Mutex::new(file),
@@ -38,6 +43,10 @@ impl LogState {
 
 pub struct AppState {}
 
+pub struct HotkeyState {
+    status: Mutex<Option<String>>,
+}
+
 #[tauri::command]
 fn log_write(msg: String, state: tauri::State<'_, LogState>) {
     state.write(&msg);
@@ -52,21 +61,52 @@ fn log_path() -> String {
 }
 
 #[tauri::command]
+fn hotkey_status(state: tauri::State<'_, HotkeyState>) -> Result<String, String> {
+    // ponytail: F12 registration failures are invisible in release — frontend polls this
+    state
+        .status
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or_else(|| "unknown".to_string())
+}
+
+#[tauri::command]
 fn show_overlay(app: AppHandle) -> Result<(), String> {
     match app.get_webview_window("overlay") {
         Some(window) => {
             // ponytail: physical pixels — no per-monitor scale reinterpretation; topmost reasserted every show
             #[cfg(target_os = "windows")]
-            if let Some((mx, my, mw, mh)) = windows_api::foreground_monitor_rect() {
-                let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: mx - 4, y: my - 4 }));
-                let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: (mw + 8) as u32, height: (mh + 8) as u32 }));
+            {
+                let rect = windows_api::foreground_monitor_rect().or_else(|| {
+                    // lock screen / UAC: no foreground window — use the monitor under the cursor
+                    let pos = app.cursor_position().ok()?;
+                    let mons = app.available_monitors().ok()?;
+                    mons.iter().find_map(|m| {
+                        let p = m.position();
+                        let s = m.size();
+                        let (x, y) = (pos.x as i32, pos.y as i32);
+                        if x >= p.x && x < p.x + s.width as i32 && y >= p.y && y < p.y + s.height as i32 {
+                            Some((p.x, p.y, s.width as i32, s.height as i32))
+                        } else {
+                            None
+                        }
+                    })
+                });
+                if let Some((mx, my, mw, mh)) = rect {
+                    let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: mx - 4, y: my - 4 }));
+                    let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: (mw + 8) as u32, height: (mh + 8) as u32 }));
+                }
             }
             let _ = window.set_always_on_top(true);
             window.show().map_err(|e| e.to_string())?;
             #[cfg(target_os = "windows")]
             {
                 windows_api::set_clickthrough(&window)?;
+                // re-apply: the region above was captured from the pre-resize rect, so refresh it
+                let _ = windows_api::set_clickthrough(&window);
             }
+            // non-Windows: no clickthrough API — show() above is the whole job
             Ok(())
         }
         None => Err("overlay window not found".to_string()),
@@ -141,7 +181,9 @@ fn find_ffmpeg(app: &AppHandle) -> PathBuf {
         let p = dir.join("ffmpeg").join("ffmpeg.exe");
         if p.exists() { return p; }
     }
-    PathBuf::from("ffmpeg.exe")
+    // ponytail: no CWD-relative "ffmpeg.exe" fallback — it would resolve via
+    // PATH/CWD unpredictably; report as not-found like ffmpeg_status does
+    ffmpeg_data_dir().join("ffmpeg.exe")
 }
 
 #[tauri::command]
@@ -168,7 +210,17 @@ async fn save_to_temp(name: String, data: Vec<u8>) -> Result<String, String> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "ve_input.mp4".to_string());
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
-        let path = std::env::temp_dir().join(&safe_name);
+        // ponytail: unique per export — repeated/concurrent exports must not collide
+        let pid = std::process::id();
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let ext = match safe_name.rfind('.') {
+            Some(i) if i > 0 => &safe_name[i..],
+            _ => "",
+        };
+        let path = std::env::temp_dir().join(format!("ve_input_{}_{}{}", pid, ms, ext));
         std::fs::write(&path, &data).map_err(|e| e.to_string())?;
         // to_string_lossy is fine here: temp_dir on Windows is ASCII-safe in practice,
         // and a lossy path would fail loudly at ffmpeg instead of silently
@@ -182,7 +234,28 @@ async fn save_to_temp(name: String, data: Vec<u8>) -> Result<String, String> {
 async fn read_file_bytes(path: String) -> Result<Vec<u8>, String> {
     // ponytail: lets the editor hand its export to sync without re-picking the file
     tauri::async_runtime::spawn_blocking(move || {
-        std::fs::read(&path).map_err(|e| e.to_string())
+        let p = PathBuf::from(&path);
+        // ponytail: temp subtree + known output dirs only — never arbitrary user files
+        let mut allowed: Vec<PathBuf> = vec![std::env::temp_dir()];
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                allowed.push(dir.join("transparent_videos"));
+            }
+        }
+        allowed.push(ffmpeg_data_dir().join("transparent_videos"));
+        let ok = allowed.iter().any(|dir| {
+            if let (Ok(c), Ok(a)) = (std::fs::canonicalize(&p), std::fs::canonicalize(dir)) {
+                if c.starts_with(&a) {
+                    return true;
+                }
+            }
+            let abs = if p.is_absolute() { p.clone() } else { std::env::temp_dir().join(&p) };
+            abs.starts_with(dir)
+        });
+        if !ok {
+            return Err("Access denied".to_string());
+        }
+        std::fs::read(&p).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -240,7 +313,7 @@ async fn open_folder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn convert_video(app: AppHandle, input_path: String, output_path: String, color_hex: String, tolerance: f64, trim_start: f64, trim_end: f64) -> Result<String, String> {
+async fn convert_video(app: AppHandle, input_path: PathBuf, output_path: PathBuf, color_hex: String, tolerance: f64, trim_start: f64, trim_end: f64) -> Result<String, String> {
     let ffmpeg_path = find_ffmpeg(&app);
     if !ffmpeg_path.exists() {
         return Err("FFmpeg not found. Download it in Settings first.".to_string());
@@ -251,7 +324,7 @@ async fn convert_video(app: AppHandle, input_path: String, output_path: String, 
     if !(0.0..=1.0).contains(&tolerance) {
         return Err("Invalid tolerance.".to_string());
     }
-    if !std::path::Path::new(&input_path).exists() {
+    if !input_path.exists() {
         return Err("Input file not found.".to_string());
     }
     if trim_start < 0.0 || trim_end < 0.0 {
@@ -262,17 +335,38 @@ async fn convert_video(app: AppHandle, input_path: String, output_path: String, 
     let ss = trim_start.to_string();
     let to = trim_end.to_string();
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        // ponytail: fast probe — inputs without an audio stream fail on -c:a libopus, so use -an
+        let has_audio = {
+            let mut probe = std::process::Command::new(&ffmpeg_path);
+            probe.arg("-i").arg(input_path.as_os_str());
+            #[cfg(target_os = "windows")]
+            probe.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            probe
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stderr).contains("Audio:"))
+                .unwrap_or(true)
+        };
         let mut cmd = std::process::Command::new(&ffmpeg_path);
-        cmd.arg("-y").arg("-i").arg(&input_path);
+        cmd.arg("-y").arg("-i").arg(input_path.as_os_str());
         if use_trim {
             cmd.arg("-ss").arg(&ss).arg("-to").arg(&to);
         }
-        cmd.args(["-vf", &filter, "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-auto-alt-ref", "0", "-cpu-used", "4", "-row-mt", "1", "-c:a", "libopus", &output_path]);
+        cmd.args(["-vf", &filter, "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-auto-alt-ref", "0", "-cpu-used", "4", "-row-mt", "1"]);
+        if has_audio {
+            cmd.args(["-c:a", "libopus"]);
+        } else {
+            cmd.arg("-an");
+        }
+        cmd.arg(output_path.as_os_str());
         #[cfg(target_os = "windows")]
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
         let out = cmd.output().map_err(|e| e.to_string())?;
         if out.status.success() {
-            Ok(output_path)
+            // ponytail: temp inputs are throwaway copies — clean up; never touch files outside temp
+            if input_path.starts_with(std::env::temp_dir()) {
+                let _ = std::fs::remove_file(&input_path);
+            }
+            Ok(output_path.to_string_lossy().to_string())
         } else {
             // ponytail: last stderr line only — full dumps leak paths and flood the UI
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -306,44 +400,50 @@ async fn ffmpeg_status(app: AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 async fn download_ffmpeg() -> Result<String, String> {
-    let dir = ffmpeg_data_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let dest = dir.join("ffmpeg.exe");
-    if dest.exists() { return Ok(dest.to_string_lossy().to_string()); }
+    tauri::async_runtime::spawn_blocking(|| -> Result<String, String> {
+        let dir = ffmpeg_data_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let dest = dir.join("ffmpeg.exe");
+        if dest.exists() { return Ok(dest.to_string_lossy().to_string()); }
 
-    let dest_escaped = dir.join("ffmpeg.exe").to_string_lossy().replace("'", "''");
-    let dir_escaped = dir.to_string_lossy().replace("'", "''");
-    let script = format!(
-        "Write-Host '=== Jumpscare Multiplayer - FFmpeg Installer ===' -ForegroundColor Cyan\n\
-         Write-Host ''\n\
-         Write-Host 'Installing FFmpeg via winget...' -ForegroundColor Yellow\n\
-         try {{\n\
-         \x20 winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements\n\
-         \x20 Write-Host ''\n\
-         \x20 Write-Host 'Copying ffmpeg.exe to app folder...' -ForegroundColor Yellow\n\
-         \x20 $pkg = Get-ChildItem 'C:\\Users\\*\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg*' -Recurse -Filter ffmpeg.exe -ErrorAction SilentlyContinue | Select-Object -First 1\n\
-         \x20 if ($pkg) {{\n\
-         \x20 \x20 New-Item -ItemType Directory -Path '{dir}' -Force | Out-Null\n\
-         \x20 \x20 Copy-Item $pkg.FullName '{dest}' -Force\n\
-         \x20 \x20 Write-Host 'Done! FFmpeg installed.' -ForegroundColor Green\n\
-         \x20 }} else {{\n\
-         \x20 \x20 Write-Host 'Installed but could not find ffmpeg.exe. Try restarting the app.' -ForegroundColor Yellow\n\
-         \x20 }}\n\
-         }} catch {{\n\
-         \x20 Write-Host ('Error: ' + $_.Exception.Message) -ForegroundColor Red\n\
-         }}\n\
-         Write-Host ''\n\
-         Read-Host 'Press Enter to close'",
-        dir = dir_escaped,
-        dest = dest_escaped,
-    );
-    let script_path = std::env::temp_dir().join("install_ffmpeg.ps1");
-    std::fs::write(&script_path, &script).map_err(|e| e.to_string())?;
-    std::process::Command::new("powershell.exe")
-        .args(["-NoExit", "-ExecutionPolicy", "Bypass", "-File", &script_path.to_string_lossy()])
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok("Installer opened in terminal".to_string())
+        let dest_escaped = dir.join("ffmpeg.exe").to_string_lossy().replace("'", "''");
+        let dir_escaped = dir.to_string_lossy().replace("'", "''");
+        let script = format!(
+            "Write-Host '=== Jumpscare Multiplayer - FFmpeg Installer ===' -ForegroundColor Cyan\n\
+             Write-Host ''\n\
+             Write-Host 'Installing FFmpeg via winget...' -ForegroundColor Yellow\n\
+             try {{\n\
+             \x20 winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements\n\
+             \x20 Write-Host ''\n\
+             \x20 Write-Host 'Copying ffmpeg.exe to app folder...' -ForegroundColor Yellow\n\
+             \x20 $pkg = Get-ChildItem 'C:\\Users\\*\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg*' -Recurse -Filter ffmpeg.exe -ErrorAction SilentlyContinue | Select-Object -First 1\n\
+             \x20 if ($pkg) {{\n\
+             \x20 \x20 New-Item -ItemType Directory -Path '{dir}' -Force | Out-Null\n\
+             \x20 \x20 Copy-Item $pkg.FullName '{dest}' -Force\n\
+             \x20 \x20 Write-Host 'Done! FFmpeg installed.' -ForegroundColor Green\n\
+             \x20 }} else {{\n\
+             \x20 \x20 Write-Host 'Installed but could not find ffmpeg.exe. Try restarting the app.' -ForegroundColor Yellow\n\
+             \x20 }}\n\
+             }} catch {{\n\
+             \x20 Write-Host ('Error: ' + $_.Exception.Message) -ForegroundColor Red\n\
+             }}\n\
+             Write-Host ''\n\
+             Read-Host 'Press Enter to close'",
+            dir = dir_escaped,
+            dest = dest_escaped,
+        );
+        let script_path = std::env::temp_dir().join("install_ffmpeg.ps1");
+        std::fs::write(&script_path, &script).map_err(|e| e.to_string())?;
+        let res = std::process::Command::new("powershell.exe")
+            .args(["-NoExit", "-ExecutionPolicy", "Bypass", "-File", &script_path.to_string_lossy()])
+            .spawn()
+            .map_err(|e| e.to_string());
+        let _ = std::fs::remove_file(&script_path);
+        res?;
+        Ok("Installer opened in terminal".to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn ytdlp_path() -> PathBuf {
@@ -361,7 +461,7 @@ fn fetch_ytdlp(dest: &PathBuf) -> Result<(), String> {
     }
     // ponytail: silent Invoke-WebRequest, no new cargo deps for one download
     let ps = format!(
-        "Invoke-WebRequest -Uri 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe' -OutFile '{}'",
+        "Invoke-WebRequest -Uri 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe' -OutFile '{}' -TimeoutSec 120",
         dest.to_string_lossy().replace('\'', "''")
     );
     let st = {
@@ -406,14 +506,32 @@ async fn ytdlp_status() -> Result<String, String> {
 #[tauri::command]
 fn download_progress() -> Result<String, String> {
     // ponytail: biggest in-progress ve_url.* file size in bytes ("" = nothing yet) — UI polls this
+    fn scan_dir(dir: &std::path::Path, best: &mut u64) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for e in entries.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with("ve_url.") {
+                    if let Ok(m) = e.metadata() {
+                        *best = (*best).max(m.len());
+                    }
+                } else if name.starts_with("ve_") && e.path().is_dir() {
+                    // per-download subdir (see download_url) — one level only
+                    if let Ok(inner) = std::fs::read_dir(e.path()) {
+                        for f in inner.flatten() {
+                            if f.file_name().to_string_lossy().starts_with("ve_url.") {
+                                if let Ok(m) = f.metadata() {
+                                    *best = (*best).max(m.len());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     let tmp = std::env::temp_dir();
-    let best = std::fs::read_dir(&tmp)
-        .map_err(|e| e.to_string())?
-        .flatten()
-        .filter(|e| e.file_name().to_string_lossy().starts_with("ve_url."))
-        .filter_map(|e| e.metadata().ok().map(|m| m.len()))
-        .max()
-        .unwrap_or(0);
+    let mut best = 0u64;
+    scan_dir(&tmp, &mut best);
     Ok(best.to_string())
 }
 
@@ -423,24 +541,26 @@ async fn download_url(app: AppHandle, url: String) -> Result<String, String> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("Paste an http(s) video URL.".to_string());
     }
-    // Resolve ffmpeg dir first (yt-dlp needs it for merges)
+    // Resolve ffmpeg dir first (yt-dlp needs it for merges) — only when actually installed
     let ff_loc = {
         let ff = find_ffmpeg(&app);
-        ff.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default()
+        if ff.exists() {
+            ff.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default()
+        } else {
+            String::new()
+        }
     };
     tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         let dest = ensure_ytdlp()?;
-        let tmp = std::env::temp_dir();
-        // clear stale downloads so the newest match below is always ours
-        if let Ok(entries) = std::fs::read_dir(&tmp) {
-            for e in entries.flatten() {
-                let name = e.file_name().to_string_lossy().to_string();
-                if name.starts_with("ve_url.") {
-                    let _ = std::fs::remove_file(e.path());
-                }
-            }
-        }
-        let tmpl = tmp.join("ve_url.%(ext)s").to_string_lossy().replace('\\', "/");
+        // ponytail: unique subdir per download — no shared names, no newest-by-mtime guessing
+        let pid = std::process::id();
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("ve_{}_{}", pid, ms));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let tmpl = dir.join("ve_url.%(ext)s").to_string_lossy().replace('\\', "/");
         let mut cmd = std::process::Command::new(&dest);
         cmd.args(["--no-playlist", "--no-warnings", "-f", "bv*+ba/b", "--merge-output-format", "mp4"]);
         if !ff_loc.is_empty() {
@@ -450,14 +570,37 @@ async fn download_url(app: AppHandle, url: String) -> Result<String, String> {
         // ponytail: hidden console — progress is polled via download_progress into the UI instead
         #[cfg(target_os = "windows")]
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        let out = cmd.output().map_err(|e| e.to_string())?;
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
+        // log file instead of pipes — no pipe-buffer deadlock on long downloads
+        let log_path = dir.join("ytdlp.log");
+        let out_log = std::fs::File::create(&log_path).map_err(|e| e.to_string())?;
+        let err_log = out_log.try_clone().map_err(|e| e.to_string())?;
+        cmd.stdout(std::process::Stdio::from(out_log));
+        cmd.stderr(std::process::Stdio::from(err_log));
+        let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+        // ponytail: poll with a ~15 min budget — a hung yt-dlp must not hang the app forever
+        let budget = std::time::Duration::from_secs(15 * 60);
+        let start = std::time::Instant::now();
+        let status = loop {
+            match child.try_wait().map_err(|e| e.to_string())? {
+                Some(status) => break status,
+                None => {
+                    if start.elapsed() > budget {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err("Download timed out after 15 minutes.".to_string());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+            }
+        };
+        if !status.success() {
+            let err = std::fs::read_to_string(&log_path).unwrap_or_default();
             let last = err.lines().map(str::trim).filter(|l| !l.is_empty()).last().unwrap_or("download failed");
             let short: String = last.chars().take(200).collect();
             return Err(format!("Download failed: {}", short));
         }
-        let newest = std::fs::read_dir(&tmp)
+        // exact output: the only ve_url.* file in our private dir
+        let newest = std::fs::read_dir(&dir)
             .map_err(|e| e.to_string())?
             .flatten()
             .filter(|e| e.file_name().to_string_lossy().starts_with("ve_url."))
@@ -481,7 +624,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::Builder::new().app_name("Jumpscare Multiplayer").args(["--minimized"]).build())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let _ = app.get_webview_window("main").map(|w| {
+                let _ = w.show();
+                let _ = w.set_focus();
+            });
+        }))
         .manage(AppState {})
+        .manage(HotkeyState { status: Mutex::new(None) })
         .manage(log_state)
         .invoke_handler(tauri::generate_handler![
             show_overlay,
@@ -503,6 +653,7 @@ pub fn run() {
             download_url,
             log_write,
             log_path,
+            hotkey_status,
         ])
         .setup(|app| {
             let log_path = std::env::temp_dir().join("jumpscare_debug.log");
@@ -518,12 +669,20 @@ pub fn run() {
                 app.handle().plugin(
                     tauri_plugin_global_shortcut::Builder::new().build(),
                 )?;
-                if let Err(e) = app.global_shortcut().on_shortcut("F12", |app, _shortcut, event| {
+                let status = if let Err(e) = app.global_shortcut().on_shortcut("F9", |app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
                         let _ = app.emit("force-hotkey", ());
                     }
                 }) {
                     eprintln!("global shortcut F12 unavailable: {e}");
+                    format!("failed: {e}")
+                } else {
+                    "registered".to_string()
+                };
+                if let Some(s) = app.try_state::<HotkeyState>() {
+                    if let Ok(mut guard) = s.status.lock() {
+                        *guard = Some(status);
+                    }
                 }
             }
 
@@ -586,7 +745,13 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            // ponytail: file log + exit — eprintln is invisible in release (windows_subsystem)
+            let p = std::env::temp_dir().join("jumpscare_startup_error.log");
+            let _ = std::fs::write(&p, format!("startup error: {e:?}"));
+            eprintln!("startup error: {e:?} (details: {})", p.display());
+            std::process::exit(1);
+        });
 }
 
 fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -616,12 +781,18 @@ fn create_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             "quit" => {
-                // Signal JS to mark player offline, then exit
+                // Signal JS to mark player offline, wait briefly for its ack, then exit
+                use tauri::Listener;
+                let (tx, rx) = std::sync::mpsc::channel::<()>();
+                let _ack = handle.listen("quit-ack", move |_| {
+                    let _ = tx.send(());
+                });
                 if let Some(w) = handle.get_webview_window("main") {
                     let _ = w.emit("quit-requested", ());
                 }
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                std::process::exit(0);
+                // cap the wait so quit never hangs (frontend may already be gone)
+                let _ = rx.recv_timeout(std::time::Duration::from_millis(1500));
+                handle.exit(0);
             }
             _ => {}
         })

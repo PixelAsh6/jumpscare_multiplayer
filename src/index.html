@@ -32,7 +32,7 @@
       <p class="subtitle">Paste the share string from your friend.</p>
 
       <label for="join-string-input">Share String</label>
-      <input id="join-string-input" type="text" placeholder="JUMPCARE:roomname:https://xxx.supabase.co:ey..." />
+      <input id="join-string-input" type="text" placeholder="JUMPSCARE:roomname:<encrypted>… (old JUMPCARE: strings still work)" />
 
       <button id="btn-join-by-string" class="primary">Join</button>
       <div id="join-status" class="status hidden"></div>
@@ -112,6 +112,7 @@
           </div>
 
           <label class="check-row"><input id="settings-autostart" type="checkbox" /> Start with Windows</label>
+          <p class="hint" id="hotkey-status-text" style="margin:4px 0 0">Force hotkey (F9): checking…</p>
 
           <div class="modal-buttons">
             <button id="btn-settings-save" class="primary small">Save Settings</button>
