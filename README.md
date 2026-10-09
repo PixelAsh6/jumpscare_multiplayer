@@ -14,7 +14,7 @@ Scare your friends across multiple PCs. An admin syncs transparent jumpscare vid
 
 ## Install (for players)
 
-1. Get the portable `jumpscare-multiplayer.exe` (no installer — just run it). Windows 10/11 only (WebView2 ships with Windows).
+1. Get the portable [`jumpscare-multiplayer.exe`](https://github.com/PixelAsh6/jumpscare_multiplayer/releases/tag/v1.0.0) and run it. Windows 10/11 only (WebView2 ships with Windows). Recommended: drop it into its own empty folder first — the app creates `dependencies/` (FFmpeg, yt-dlp) and `transparent_videos/` (your exports) right next to it, so a dedicated folder keeps everything tidy and portable together.
 2. Open **Settings**:
    - Install **FFmpeg** (video editor) — one click, terminal guided.
    - Install **yt-dlp** (URL downloads) — one click, silent.
