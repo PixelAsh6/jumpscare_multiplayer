@@ -12,7 +12,7 @@ Scare your friends across multiple PCs. An admin syncs transparent jumpscare vid
 - **Force (button + F9) and Preview** - admin force-fires to everyone; preview plays only locally. Auto-scares roll against lobby chance with a 10s cooldown (manual triggers bypass it).
 - **System integration** - tray icon (minimize/quit), start-with-Windows toggle (starts minimized), setup guide built in.
 
-## Install (for players)
+## Install
 
 1. Get the portable [`jumpscare-multiplayer.exe`](https://github.com/PixelAsh6/jumpscare_multiplayer/releases/latest) and run it. Windows 10/11 only (WebView2 ships with Windows). Recommended: drop it into its own empty folder first - the app creates `dependencies/` (FFmpeg, yt-dlp) and `transparent_videos/` (your exports) right next to it, so a dedicated folder keeps everything tidy and portable together.
 2. Open **Settings**:
